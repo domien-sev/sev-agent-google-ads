@@ -31,7 +31,7 @@ async function discoverCampaigns(
 ): Promise<AgentResponse> {
   const query = gaql.campaignOverview();
   const results = await agent.googleAds.query(query) as Array<{
-    results?: Array<Record<string, Record<string, string | number>>>;
+    results?: Array<Record<string, any>>;
   }>;
 
   const campaigns: Array<{

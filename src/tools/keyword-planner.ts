@@ -52,7 +52,7 @@ export async function findNegativeCandidates(
     LIMIT 500
   `;
 
-  const results = await client.query(query) as Array<{ results?: Array<Record<string, Record<string, string | number>>> }>;
+  const results = await client.query(query) as Array<{ results?: Array<Record<string, any>> }>;
   const candidates: NegativeKeywordCandidate[] = [];
 
   for (const batch of results) {
@@ -110,7 +110,7 @@ export async function addNegativeKeywords(
         },
       },
     }));
-    const result = await client.mutateResource("campaignCriteria", ops);
+    const result = await (client as any).mutateResource("campaignCriteria", ops);
     return result.results.length;
   }
 
@@ -128,7 +128,7 @@ export async function addNegativeKeywords(
       },
     },
   }));
-  const result = await client.mutateResource("adGroupCriteria", ops);
+  const result = await (client as any).mutateResource("adGroupCriteria", ops);
   return result.results.length;
 }
 
@@ -166,7 +166,7 @@ export async function getQualityScoreBreakdown(
     LIMIT 200
   `;
 
-  const results = await client.query(query) as Array<{ results?: Array<Record<string, Record<string, string | number>>> }>;
+  const results = await client.query(query) as Array<{ results?: Array<Record<string, any>> }>;
 
   const distribution: Record<number, number> = {};
   const lowScoreKeywords: Array<{

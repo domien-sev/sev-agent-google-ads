@@ -41,7 +41,7 @@ async function handleKeywordOverview(
 ): Promise<AgentResponse> {
   const query = gaql.keywordPerformance();
   const results = await agent.googleAds.query(query) as Array<{
-    results?: Array<Record<string, Record<string, string | number>>>;
+    results?: Array<Record<string, any>>;
   }>;
 
   const keywords: Array<{
@@ -155,7 +155,7 @@ async function handleSearchTerms(
 
   const query = gaql.searchTermReport();
   const results = await agent.googleAds.query(query) as Array<{
-    results?: Array<Record<string, Record<string, string | number>>>;
+    results?: Array<Record<string, any>>;
   }>;
 
   const terms: Array<{

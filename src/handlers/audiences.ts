@@ -28,7 +28,7 @@ async function handleAudienceReport(
 ): Promise<AgentResponse> {
   const query = gaql.audiencePerformance();
   const results = await agent.googleAds.query(query) as Array<{
-    results?: Array<Record<string, Record<string, string | number>>>;
+    results?: Array<Record<string, any>>;
   }>;
 
   const audiences: Array<{
@@ -114,7 +114,7 @@ async function handleCreateAudience(
 
   try {
     // Create custom audience via Google Ads API
-    const result = await agent.googleAds.mutateResource("customAudiences", [{
+    const result = await (agent.googleAds as any).mutateResource("customAudiences", [{
       create: {
         name: audienceName,
         type: "AUTO",

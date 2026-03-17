@@ -132,8 +132,9 @@ export interface AccountHealthScore {
   topIssues: string[];
 }
 
-/** GAQL query result row (generic) */
-export type GaqlRow = Record<string, Record<string, string | number>>;
+/** GAQL query result row (generic — permissive because GAQL results are dynamic) */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export type GaqlRow = Record<string, any>;
 
 /** Campaign builder config for all 5 types */
 export interface CampaignConfig {

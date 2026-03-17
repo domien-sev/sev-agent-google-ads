@@ -45,7 +45,7 @@ async function handlePerformanceReport(
 
   const range = { startDate, endDate };
   const results = await agent.googleAds.query(gaql.campaignOverview(range)) as Array<{
-    results?: Array<Record<string, Record<string, string | number>>>;
+    results?: Array<Record<string, any>>;
   }>;
 
   let totalImpressions = 0;
@@ -126,7 +126,7 @@ async function handleQualityScoreReport(
   message: RoutedMessage,
 ): Promise<AgentResponse> {
   const results = await agent.googleAds.query(gaql.qualityScoreDistribution()) as Array<{
-    results?: Array<Record<string, Record<string, string | number>>>;
+    results?: Array<Record<string, any>>;
   }>;
 
   const distribution: Record<number, { count: number; impressions: number; cost: number }> = {};
@@ -228,7 +228,7 @@ async function handlePMaxReport(
   message: RoutedMessage,
 ): Promise<AgentResponse> {
   const results = await agent.googleAds.query(gaql.assetGroupPerformance()) as Array<{
-    results?: Array<Record<string, Record<string, string | number>>>;
+    results?: Array<Record<string, any>>;
   }>;
 
   const assetGroups: Array<{

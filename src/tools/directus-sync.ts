@@ -49,7 +49,7 @@ export async function syncKeywords(
   `;
 
   const results = await googleAds.query(query) as Array<{
-    results?: Array<Record<string, Record<string, string | number>>>;
+    results?: Array<Record<string, any>>;
   }>;
 
   const client = directus.getClient("sev-ai");
@@ -86,7 +86,7 @@ export async function syncKeywords(
       // Check if keyword already exists
       try {
         const existing = await client.request(
-          readItems("google_ads_keywords" as "agents", {
+          readItems("google_ads_keywords" as any, {
             filter: {
               keyword_text: { _eq: keywordText },
               campaign_id: { _eq: campaignId },
@@ -98,11 +98,11 @@ export async function syncKeywords(
 
         if (existing[0]?.id) {
           await client.request(
-            updateItem("google_ads_keywords" as "agents", existing[0].id as string, keywordData as Record<string, unknown>),
+            updateItem("google_ads_keywords" as any, existing[0].id as string, keywordData as Record<string, unknown>),
           );
         } else {
           await client.request(
-            createItem("google_ads_keywords" as "agents", keywordData as Record<string, unknown>),
+            createItem("google_ads_keywords" as any, keywordData as Record<string, unknown>),
           );
         }
         synced++;
@@ -143,7 +143,7 @@ export async function syncSearchTerms(
   `;
 
   const results = await googleAds.query(query) as Array<{
-    results?: Array<Record<string, Record<string, string | number>>>;
+    results?: Array<Record<string, any>>;
   }>;
 
   const client = directus.getClient("sev-ai");
@@ -166,7 +166,7 @@ export async function syncSearchTerms(
 
       try {
         await client.request(
-          createItem("google_ads_search_terms" as "agents", searchTermData as Record<string, unknown>),
+          createItem("google_ads_search_terms" as any, searchTermData as Record<string, unknown>),
         );
         synced++;
       } catch {
@@ -201,7 +201,7 @@ export async function syncAssetGroups(
   `;
 
   const results = await googleAds.query(query) as Array<{
-    results?: Array<Record<string, Record<string, string | number | string[]>>>;
+    results?: Array<Record<string, any>>;
   }>;
 
   const client = directus.getClient("sev-ai");
@@ -225,7 +225,7 @@ export async function syncAssetGroups(
 
       try {
         const existing = await client.request(
-          readItems("google_ads_asset_groups" as "agents", {
+          readItems("google_ads_asset_groups" as any, {
             filter: {
               resource_name: { _eq: assetGroupData.resource_name },
             } as Record<string, unknown>,
@@ -235,11 +235,11 @@ export async function syncAssetGroups(
 
         if (existing[0]?.id) {
           await client.request(
-            updateItem("google_ads_asset_groups" as "agents", existing[0].id as string, assetGroupData as Record<string, unknown>),
+            updateItem("google_ads_asset_groups" as any, existing[0].id as string, assetGroupData as Record<string, unknown>),
           );
         } else {
           await client.request(
-            createItem("google_ads_asset_groups" as "agents", assetGroupData as Record<string, unknown>),
+            createItem("google_ads_asset_groups" as any, assetGroupData as Record<string, unknown>),
           );
         }
         synced++;
