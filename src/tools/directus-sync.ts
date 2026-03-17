@@ -15,7 +15,7 @@ import type {
 } from "../types.js";
 
 /**
- * Sync keyword data from Google Ads to ops Directus.
+ * Sync keyword data from Google Ads to Directus.
  * Pulls keyword performance + quality scores and upserts into google_ads_keywords.
  */
 export async function syncKeywords(
@@ -52,7 +52,7 @@ export async function syncKeywords(
     results?: Array<Record<string, Record<string, string | number>>>;
   }>;
 
-  const opsClient = directus.getClient("ops" as "sev-ai");
+  const client = directus.getClient("sev-ai");
   let synced = 0;
 
   for (const batch of results) {
@@ -85,7 +85,7 @@ export async function syncKeywords(
 
       // Check if keyword already exists
       try {
-        const existing = await opsClient.request(
+        const existing = await client.request(
           readItems("google_ads_keywords" as "agents", {
             filter: {
               keyword_text: { _eq: keywordText },
@@ -97,11 +97,11 @@ export async function syncKeywords(
         );
 
         if (existing[0]?.id) {
-          await opsClient.request(
+          await client.request(
             updateItem("google_ads_keywords" as "agents", existing[0].id as string, keywordData as Record<string, unknown>),
           );
         } else {
-          await opsClient.request(
+          await client.request(
             createItem("google_ads_keywords" as "agents", keywordData as Record<string, unknown>),
           );
         }
@@ -116,7 +116,7 @@ export async function syncKeywords(
 }
 
 /**
- * Sync search term data from Google Ads to ops Directus.
+ * Sync search term data from Google Ads to Directus.
  */
 export async function syncSearchTerms(
   googleAds: GoogleAdsClient,
@@ -146,7 +146,7 @@ export async function syncSearchTerms(
     results?: Array<Record<string, Record<string, string | number>>>;
   }>;
 
-  const opsClient = directus.getClient("ops" as "sev-ai");
+  const client = directus.getClient("sev-ai");
   let synced = 0;
 
   for (const batch of results) {
@@ -165,7 +165,7 @@ export async function syncSearchTerms(
       };
 
       try {
-        await opsClient.request(
+        await client.request(
           createItem("google_ads_search_terms" as "agents", searchTermData as Record<string, unknown>),
         );
         synced++;
@@ -179,7 +179,7 @@ export async function syncSearchTerms(
 }
 
 /**
- * Sync PMax asset group data to ops Directus.
+ * Sync PMax asset group data to Directus.
  */
 export async function syncAssetGroups(
   googleAds: GoogleAdsClient,
@@ -204,7 +204,7 @@ export async function syncAssetGroups(
     results?: Array<Record<string, Record<string, string | number | string[]>>>;
   }>;
 
-  const opsClient = directus.getClient("ops" as "sev-ai");
+  const client = directus.getClient("sev-ai");
   let synced = 0;
 
   for (const batch of results) {
@@ -224,7 +224,7 @@ export async function syncAssetGroups(
       };
 
       try {
-        const existing = await opsClient.request(
+        const existing = await client.request(
           readItems("google_ads_asset_groups" as "agents", {
             filter: {
               resource_name: { _eq: assetGroupData.resource_name },
@@ -234,11 +234,11 @@ export async function syncAssetGroups(
         );
 
         if (existing[0]?.id) {
-          await opsClient.request(
+          await client.request(
             updateItem("google_ads_asset_groups" as "agents", existing[0].id as string, assetGroupData as Record<string, unknown>),
           );
         } else {
-          await opsClient.request(
+          await client.request(
             createItem("google_ads_asset_groups" as "agents", assetGroupData as Record<string, unknown>),
           );
         }

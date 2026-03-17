@@ -1,6 +1,6 @@
 import { BaseAgent } from "@domien-sev/agent-sdk";
 import type { AgentConfig } from "@domien-sev/agent-sdk";
-import type { RoutedMessage, AgentResponse, DirectusInstanceConfig } from "@domien-sev/shared-types";
+import type { RoutedMessage, AgentResponse } from "@domien-sev/shared-types";
 import { GoogleAdsClient } from "@domien-sev/ads-sdk";
 
 import { handleResearch } from "./handlers/research.js";
@@ -15,16 +15,6 @@ export class GoogleAdsAgent extends BaseAgent {
   public googleAds!: GoogleAdsClient;
 
   constructor(config: AgentConfig) {
-    // Add ops Directus instance if configured
-    if (process.env.OPS_DIRECTUS_URL && process.env.OPS_DIRECTUS_TOKEN) {
-      const opsConfig: DirectusInstanceConfig = {
-        instance: "ops" as DirectusInstanceConfig["instance"],
-        url: process.env.OPS_DIRECTUS_URL,
-        token: process.env.OPS_DIRECTUS_TOKEN,
-      };
-      config.directusConfig.push(opsConfig);
-    }
-
     super(config);
   }
 

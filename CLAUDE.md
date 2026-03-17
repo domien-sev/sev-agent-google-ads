@@ -62,14 +62,16 @@ External:
 
 ## Directus Collections
 
-### On sev-ai (central):
+All collections live on the single Directus instance at `ops.shoppingeventvip.be`.
+
+### Shared (with ads agent):
 | Collection | Purpose |
 |-----------|---------|
-| `ad_campaigns` | Campaign configs (shared with ads agent) |
+| `ad_campaigns` | Campaign configs |
 | `ad_creatives` | Creative assets (read approved, platform_target includes 'google') |
 | `ad_performance` | Performance metrics per creative per day |
 
-### On ops.shoppingeventvip.be (Google Ads-specific):
+### Google Ads-specific:
 | Collection | Purpose |
 |-----------|---------|
 | `google_ads_keywords` | Keyword tracking with quality score components |
@@ -81,8 +83,7 @@ External:
 
 See `.env.example` for the full list. Key ones:
 - `GOOGLE_ADS_*` — Developer token, OAuth credentials, customer ID
-- `DIRECTUS_URL` / `DIRECTUS_TOKEN` — Central sev-ai Directus
-- `OPS_DIRECTUS_URL` / `OPS_DIRECTUS_TOKEN` — ops.shoppingeventvip.be
+- `DIRECTUS_URL` / `DIRECTUS_TOKEN` — Directus at ops.shoppingeventvip.be
 - `ANTHROPIC_API_KEY` — For LLM-powered strategy/copy generation
 
 ## Endpoints
