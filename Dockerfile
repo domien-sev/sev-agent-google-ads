@@ -1,7 +1,7 @@
 FROM node:22-alpine AS builder
 
-ARG GITHUB_TOKEN
-ENV GITHUB_TOKEN=$GITHUB_TOKEN
+ARG GH_PKG_TOKEN
+ENV GH_PKG_TOKEN=$GH_PKG_TOKEN
 
 WORKDIR /app
 COPY package.json package-lock.json .npmrc ./
@@ -12,15 +12,15 @@ RUN npm run build
 
 FROM node:22-alpine
 
-ARG GITHUB_TOKEN
-ENV GITHUB_TOKEN=$GITHUB_TOKEN
+ARG GH_PKG_TOKEN
+ENV GH_PKG_TOKEN=$GH_PKG_TOKEN
 
 WORKDIR /app
 COPY package.json package-lock.json .npmrc ./
 RUN npm install --omit=dev
 # Remove .npmrc and token from final image
 RUN rm -f .npmrc
-ENV GITHUB_TOKEN=""
+ENV GH_PKG_TOKEN=""
 
 ENV NODE_ENV=production
 EXPOSE 3000
