@@ -97,13 +97,11 @@ export async function syncKeywords(
         ) as Array<{ id?: string }>;
 
         if (existing[0]?.id) {
-          await (client as any).request(
-            updateItem("google_ads_keywords" as any, existing[0].id, keywordData),
-          );
+          // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
+          await (client as any).request(updateItem("google_ads_keywords", existing[0].id, keywordData as any));
         } else {
-          await (client as any).request(
-            createItem("google_ads_keywords" as any, keywordData),
-          );
+          // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
+          await (client as any).request(createItem("google_ads_keywords", keywordData as any));
         }
         synced++;
       } catch {
@@ -165,9 +163,7 @@ export async function syncSearchTerms(
       };
 
       try {
-        await (client as any).request(
-          createItem("google_ads_search_terms" as any, searchTermData),
-        );
+        await (client as any).request(createItem("google_ads_search_terms", searchTermData as any));
         synced++;
       } catch {
         // Skip duplicates or missing collection
@@ -234,13 +230,9 @@ export async function syncAssetGroups(
         ) as Array<{ id?: string }>;
 
         if (existing[0]?.id) {
-          await (client as any).request(
-            updateItem("google_ads_asset_groups" as any, existing[0].id, assetGroupData),
-          );
+          await (client as any).request(updateItem("google_ads_asset_groups", existing[0].id, assetGroupData as any));
         } else {
-          await (client as any).request(
-            createItem("google_ads_asset_groups" as any, assetGroupData),
-          );
+          await (client as any).request(createItem("google_ads_asset_groups", assetGroupData as any));
         }
         synced++;
       } catch {
