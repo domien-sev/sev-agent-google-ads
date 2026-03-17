@@ -85,17 +85,9 @@ export async function syncKeywords(
 
       // Check if keyword already exists
       try {
-        // @ts-ignore — collection not in typed schema
-        const existing = await (client as any).request(
-          readItems("google_ads_keywords", {
-            filter: {
-              keyword_text: { _eq: keywordText },
-              campaign_id: { _eq: campaignId },
-              ad_group_id: { _eq: adGroupId },
-            },
-            limit: 1,
-          }),
-        ) as Array<{ id?: string }>;
+        // @ts-ignore — google_ads_keywords not in typed Directus schema
+        const readKw = readItems("google_ads_keywords", { filter: { keyword_text: { _eq: keywordText }, campaign_id: { _eq: campaignId }, ad_group_id: { _eq: adGroupId } }, limit: 1 });
+        const existing = await (client as any).request(readKw) as Array<{ id?: string }>;
 
         if (existing[0]?.id) {
           // @ts-ignore — collection not in typed schema
@@ -222,15 +214,9 @@ export async function syncAssetGroups(
       };
 
       try {
-        // @ts-ignore — collection not in typed schema
-        const existing = await (client as any).request(
-          readItems("google_ads_asset_groups", {
-            filter: {
-              resource_name: { _eq: assetGroupData.resource_name },
-            },
-            limit: 1,
-          }),
-        ) as Array<{ id?: string }>;
+        // @ts-ignore — google_ads_asset_groups not in typed Directus schema
+        const readAg = readItems("google_ads_asset_groups", { filter: { resource_name: { _eq: assetGroupData.resource_name } }, limit: 1 });
+        const existing = await (client as any).request(readAg) as Array<{ id?: string }>;
 
         if (existing[0]?.id) {
           // @ts-ignore — collection not in typed schema
