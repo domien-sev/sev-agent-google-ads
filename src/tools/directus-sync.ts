@@ -97,11 +97,11 @@ export async function syncKeywords(
         ) as Array<{ id?: string }>;
 
         if (existing[0]?.id) {
-          // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
-          await (client as any).request(updateItem("google_ads_keywords", existing[0].id, keywordData as any));
+          // @ts-ignore — collection not in typed schema
+          await (client as any).request(updateItem("google_ads_keywords", existing[0].id, keywordData));
         } else {
-          // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
-          await (client as any).request(createItem("google_ads_keywords", keywordData as any));
+          // @ts-ignore — collection not in typed schema
+          await (client as any).request(createItem("google_ads_keywords", keywordData));
         }
         synced++;
       } catch {
@@ -163,7 +163,8 @@ export async function syncSearchTerms(
       };
 
       try {
-        await (client as any).request(createItem("google_ads_search_terms", searchTermData as any));
+        // @ts-ignore — collection not in typed schema
+        await (client as any).request(createItem("google_ads_search_terms", searchTermData));
         synced++;
       } catch {
         // Skip duplicates or missing collection
@@ -230,9 +231,11 @@ export async function syncAssetGroups(
         ) as Array<{ id?: string }>;
 
         if (existing[0]?.id) {
-          await (client as any).request(updateItem("google_ads_asset_groups", existing[0].id, assetGroupData as any));
+          // @ts-ignore — collection not in typed schema
+          await (client as any).request(updateItem("google_ads_asset_groups", existing[0].id, assetGroupData));
         } else {
-          await (client as any).request(createItem("google_ads_asset_groups", assetGroupData as any));
+          // @ts-ignore — collection not in typed schema
+          await (client as any).request(createItem("google_ads_asset_groups", assetGroupData));
         }
         synced++;
       } catch {
