@@ -85,24 +85,24 @@ export async function syncKeywords(
 
       // Check if keyword already exists
       try {
-        const existing = await client.request(
+        const existing = await (client as any).request(
           readItems("google_ads_keywords" as any, {
             filter: {
               keyword_text: { _eq: keywordText },
               campaign_id: { _eq: campaignId },
               ad_group_id: { _eq: adGroupId },
-            } as Record<string, unknown>,
+            },
             limit: 1,
           }),
-        );
+        ) as Array<{ id?: string }>;
 
         if (existing[0]?.id) {
-          await client.request(
-            updateItem("google_ads_keywords" as any, existing[0].id as string, keywordData as Record<string, unknown>),
+          await (client as any).request(
+            updateItem("google_ads_keywords" as any, existing[0].id, keywordData),
           );
         } else {
-          await client.request(
-            createItem("google_ads_keywords" as any, keywordData as Record<string, unknown>),
+          await (client as any).request(
+            createItem("google_ads_keywords" as any, keywordData),
           );
         }
         synced++;
@@ -165,8 +165,8 @@ export async function syncSearchTerms(
       };
 
       try {
-        await client.request(
-          createItem("google_ads_search_terms" as any, searchTermData as Record<string, unknown>),
+        await (client as any).request(
+          createItem("google_ads_search_terms" as any, searchTermData),
         );
         synced++;
       } catch {
@@ -224,22 +224,22 @@ export async function syncAssetGroups(
       };
 
       try {
-        const existing = await client.request(
+        const existing = await (client as any).request(
           readItems("google_ads_asset_groups" as any, {
             filter: {
               resource_name: { _eq: assetGroupData.resource_name },
-            } as Record<string, unknown>,
+            },
             limit: 1,
           }),
-        );
+        ) as Array<{ id?: string }>;
 
         if (existing[0]?.id) {
-          await client.request(
-            updateItem("google_ads_asset_groups" as any, existing[0].id as string, assetGroupData as Record<string, unknown>),
+          await (client as any).request(
+            updateItem("google_ads_asset_groups" as any, existing[0].id, assetGroupData),
           );
         } else {
-          await client.request(
-            createItem("google_ads_asset_groups" as any, assetGroupData as Record<string, unknown>),
+          await (client as any).request(
+            createItem("google_ads_asset_groups" as any, assetGroupData),
           );
         }
         synced++;
