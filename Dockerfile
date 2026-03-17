@@ -1,6 +1,7 @@
 FROM node:22-alpine AS builder
 
 ARG GITHUB_TOKEN
+ENV GITHUB_TOKEN=$GITHUB_TOKEN
 
 WORKDIR /app
 COPY package.json package-lock.json .npmrc ./
@@ -12,13 +13,14 @@ RUN npm run build
 FROM node:22-alpine
 
 ARG GITHUB_TOKEN
+ENV GITHUB_TOKEN=$GITHUB_TOKEN
 
 WORKDIR /app
 COPY package.json package-lock.json .npmrc ./
 RUN npm install --omit=dev
-# Remove .npmrc from final image (contains token reference)
+# Remove .npmrc and token from final image
 RUN rm -f .npmrc
-COPY --from=builder /app/dist ./dist
+ENV GITHUB_TOKEN=""
 
 ENV NODE_ENV=production
 EXPOSE 3000
