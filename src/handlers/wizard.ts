@@ -20,6 +20,7 @@ import {
 } from "../tools/ai-recommendations.js";
 import type { WizardRecommendations } from "../tools/ai-recommendations.js";
 import { buildCampaign } from "../tools/campaign-builder.js";
+import { generateEditorCsv, formatCsvForSlack } from "../tools/csv-export.js";
 import type { CampaignConfig } from "../types.js";
 import * as gaql from "../tools/gaql.js";
 
@@ -232,9 +233,14 @@ async function handleReview(
   const lower = message.text.trim().toLowerCase();
   const rec = session.recommendations!;
 
-  // Confirm → create campaign
+  // Confirm → create campaign via API
   if (lower === "confirm" || lower === "yes" || lower === "go") {
     return confirmAndBuild(agent, message, session, key);
+  }
+
+  // Export CSV for Google Ads Editor
+  if (lower.includes("export") || lower.includes("csv") || lower.includes("editor")) {
+    return exportCsv(message, session, key);
   }
 
   // Adjust budget
@@ -309,7 +315,8 @@ async function handleReview(
     "  `remove keyword [text]` — remove a keyword",
     "  `rename to [name]` — change campaign name",
     "  `show` — show current recommendation",
-    "  `confirm` — create the campaign (PAUSED)",
+    "  `confirm` — create the campaign via API (PAUSED)",
+    "  `export csv` — download as Google Ads Editor CSV",
     "  `cancel` — abort wizard",
   ].join("\n"));
 }
@@ -406,6 +413,28 @@ async function confirmAndBuild(
     // Don't clear session on failure — user can retry
     return reply(message, `Failed to create campaign: ${errMsg}\n\nType \`confirm\` to retry or \`cancel\` to abort.`);
   }
+}
+
+/** Export campaign as Google Ads Editor CSV */
+async function exportCsv(
+  message: RoutedMessage,
+  session: WizardState,
+  key: string,
+): Promise<AgentResponse> {
+  const rec = session.recommendations!;
+
+  const csv = generateEditorCsv(rec, {
+    campaignType: session.campaignType,
+    targetCpa: session.sourceStructure?.bidding.targetCpaMicros
+      ? session.sourceStructure.bidding.targetCpaMicros / 1_000_000
+      : undefined,
+    targetRoas: session.sourceStructure?.bidding.targetRoas ?? undefined,
+  });
+
+  // Clean up session
+  sessions.delete(key);
+
+  return reply(message, formatCsvForSlack(csv, rec.campaignName));
 }
 
 /** Find a campaign ID by name or numeric ID */

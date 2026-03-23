@@ -196,7 +196,8 @@ export function formatRecommendations(rec: WizardRecommendations): string {
     "  `regenerate copy` — get new ad copy suggestions",
     "  `add keyword [text]` — add a keyword",
     "  `remove keyword [text]` — remove a keyword",
-    "  `confirm` — create the campaign (PAUSED)",
+    "  `confirm` — create via API (PAUSED)",
+    "  `export csv` — download as Google Ads Editor CSV",
     "  `cancel` — abort wizard",
   );
 
