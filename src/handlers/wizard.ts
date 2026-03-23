@@ -25,7 +25,7 @@ import type { CampaignConfig } from "../types.js";
 import * as gaql from "../tools/gaql.js";
 
 /** Wizard states */
-type WizardStep = "awaiting_type" | "analyzing" | "reviewing" | "confirmed";
+type WizardStep = "awaiting_type" | "awaiting_context" | "analyzing" | "reviewing" | "confirmed";
 
 interface WizardState {
   step: WizardStep;
@@ -91,6 +91,8 @@ export async function handleWizard(
   switch (existing.step) {
     case "awaiting_type":
       return handleTypeSelection(agent, message, existing, key);
+    case "awaiting_context":
+      return handleContext(agent, message, existing, key);
     case "reviewing":
       return handleReview(agent, message, existing, key);
     default:
@@ -210,10 +212,42 @@ async function handleTypeSelection(
   session.step = "analyzing";
   sessions.set(key, session);
 
-  // Generate AI recommendations from scratch
+  // Ask for context before generating
+  session.campaignType = selectedType;
+  session.step = "awaiting_context";
+  sessions.set(key, session);
+
+  return reply(message, [
+    `Got it — *${selectedType}* campaign.`,
+    "",
+    "Tell me about the campaign. What brand/product, landing page, and goal?",
+    "",
+    'Example: `RiverWoods winter sale, shoppingeventvip.be/river-woods, drive registrations`',
+    'Or: `Xandres outlet, 70% off designer fashion, target Belgium`',
+  ].join("\n"));
+
+  session.recommendations = recommendations;
+  session.step = "reviewing";
+  sessions.set(key, session);
+
+  return reply(message, formatRecommendations(recommendations));
+}
+
+/** Step 2b: Handle user context for fresh campaign creation */
+async function handleContext(
+  agent: GoogleAdsAgent,
+  message: RoutedMessage,
+  session: WizardState,
+  key: string,
+): Promise<AgentResponse> {
+  const userContext = message.text.trim();
+
+  session.step = "analyzing";
+  sessions.set(key, session);
+
   const recommendations = await generateRecommendations({
-    campaignType: selectedType,
-    brandOrProduct: "Shopping Event VIP — Belgian fashion outlet, designer brands at outlet prices",
+    campaignType: session.campaignType,
+    brandOrProduct: userContext,
   });
 
   session.recommendations = recommendations;
@@ -301,6 +335,32 @@ async function handleReview(
     return reply(message, `Campaign name set to "${rec.campaignName}". Type \`confirm\` to create.`);
   }
 
+  // Change landing page / final URL
+  const urlMatch = message.text.trim().match(/(?:url|link|landing\s*page|final\s*url)\s+(?:to\s+)?(https?:\/\/\S+)/i);
+  if (urlMatch) {
+    rec.finalUrl = urlMatch[1];
+    sessions.set(key, session);
+    return reply(message, `Landing page set to \`${rec.finalUrl}\`. Type \`confirm\` or \`export csv\` when ready.`);
+  }
+
+  // Change path1/path2
+  const pathMatch = message.text.trim().match(/(?:path|paths?)\s+(?:to\s+)?(\S+?)(?:\s*\/\s*(\S+))?\s*$/i);
+  if (pathMatch) {
+    rec.path1 = pathMatch[1].slice(0, 15);
+    rec.path2 = pathMatch[2] ? pathMatch[2].slice(0, 15) : rec.path2;
+    sessions.set(key, session);
+    return reply(message, `URL paths set to \`${rec.path1}\`${rec.path2 ? ` / \`${rec.path2}\`` : ""}. Type \`confirm\` or \`export csv\` when ready.`);
+  }
+
+  // Change locations
+  const locMatch = message.text.trim().match(/(?:target|location|locations?)\s+(?:to\s+)?(.+)/i);
+  if (locMatch) {
+    rec.targeting.locations = locMatch[1].split(/[,\s]+/).map((l) => l.trim().toUpperCase()).filter(Boolean);
+    rec.targeting.reasoning = "Manually set";
+    sessions.set(key, session);
+    return reply(message, `Targeting set to ${rec.targeting.locations.join(", ")}. Type \`confirm\` or \`export csv\` when ready.`);
+  }
+
   // Show current state
   if (lower === "show" || lower === "status" || lower === "summary") {
     return reply(message, formatRecommendations(rec));
@@ -309,14 +369,21 @@ async function handleReview(
   // Unknown command in review mode
   return reply(message, [
     "I didn't understand that. While reviewing, you can:",
+    "",
+    "*Modify:*",
     "  `adjust budget to €X` — change daily budget",
-    "  `regenerate copy` — get new ad copy",
+    "  `url https://...` — change landing page",
+    "  `path outlet/sale` — change URL display paths",
+    "  `target BE, NL` — change location targeting",
+    "  `rename to [name]` — change campaign name",
     "  `add keyword [text]` — add a keyword",
     "  `remove keyword [text]` — remove a keyword",
-    "  `rename to [name]` — change campaign name",
+    "  `regenerate copy` — get new ad copy suggestions",
+    "",
+    "*Actions:*",
     "  `show` — show current recommendation",
-    "  `confirm` — create the campaign via API (PAUSED)",
-    "  `export csv` — download as Google Ads Editor CSV",
+    "  `confirm` — create via API (PAUSED)",
+    "  `export csv` — Google Ads Editor CSV",
     "  `cancel` — abort wizard",
   ].join("\n"));
 }

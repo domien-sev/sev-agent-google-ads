@@ -60,14 +60,27 @@ export async function generateRecommendations(opts: {
       .flatMap((ad) => ad.descriptions)
       .slice(0, 4);
 
+    const existingUrls = source.adGroups
+      .flatMap((ag) => ag.ads)
+      .flatMap((ad) => ad.finalUrls)
+      .filter(Boolean);
+
+    const existingPaths = source.adGroups
+      .flatMap((ag) => ag.ads)
+      .map((ad) => [ad.path1, ad.path2].filter(Boolean).join("/"))
+      .filter(Boolean);
+
     context = `
 Source campaign: "${source.name}"
 Type: ${source.type}
 Budget: €${source.budget.daily.toFixed(2)}/day
 Bidding: ${source.bidding.strategy}
+Locations: ${source.locations.join(", ")}
 Existing keywords (${keywords.length}): ${keywords.join(", ")}
 Existing headlines: ${existingHeadlines.map((h) => `"${h}"`).join(", ")}
 Existing descriptions: ${existingDescriptions.map((d) => `"${d}"`).join(", ")}
+Existing landing pages: ${existingUrls.map((u) => `"${u}"`).join(", ") || "none found"}
+Existing URL paths: ${existingPaths.join(", ") || "none"}
 `;
   } else if (brandOrProduct) {
     context = `Brand/Product: ${brandOrProduct}`;
@@ -83,22 +96,23 @@ Existing descriptions: ${existingDescriptions.map((d) => `"${d}"`).join(", ")}
     messages: [
       {
         role: "user",
-        content: `You are a Google Ads specialist for Shopping Event VIP, a Belgian fashion e-commerce outlet selling designer brands at outlet prices. Website: shoppingeventvip.be
+        content: `You are a Google Ads specialist. Your job is to create campaign recommendations based on the context provided below. Analyze the source data carefully and create relevant, high-quality campaigns.
 
 ${context}
 
 Generate a complete campaign recommendation as JSON. Requirements:
-- campaignName: descriptive name with date prefix (YYMMDD format, today is ${new Date().toISOString().split("T")[0]})
-- budget: daily budget in euros with reasoning (consider the source if cloning)
-- adCopy: bilingual (NL + FR) responsive search ads
-  - 15 headlines each language (max 30 chars STRICT — count carefully)
+- campaignName: descriptive name with date prefix (YYMMDD format, today is ${new Date().toISOString().split("T")[0]}). Derive the brand/product name from the context.
+- budget: daily budget in euros with reasoning (consider the source if cloning, or recommend based on industry/product)
+- adCopy: bilingual (NL + FR) responsive search ads tailored to the brand/product
+  - 15 headlines each language (max 30 chars STRICT — count carefully, this is critical)
   - 4 descriptions each language (max 90 chars STRICT)
-  - Headlines should include: brand/product, USPs, CTAs, seasonal hooks
+  - Headlines should include: brand/product name, USPs, CTAs, seasonal hooks
+  - Derive the brand voice and USPs from the source campaign data or user context
   - Mix pinnable brand headlines with dynamic benefit headlines
-- keywords: 15-25 keywords with match types and thematic groups (branded, generic, competitor, long-tail)
-- targeting: location codes and reasoning
-- finalUrl: landing page URL
-- path1, path2: display URL paths (max 15 chars each)
+- keywords: 15-25 keywords with match types and thematic groups (branded, generic, competitor, long-tail). Derive from source keywords if cloning.
+- targeting: location codes (e.g. "BE", "NL") and reasoning based on context
+- finalUrl: landing page URL (derive from source ads if cloning, otherwise ask-worthy)
+- path1, path2: display URL paths (max 15 chars each, relevant to brand/product)
 
 Respond with ONLY valid JSON matching this structure:
 {
@@ -191,14 +205,8 @@ export function formatRecommendations(rec: WizardRecommendations): string {
 
   lines.push(
     "",
-    "_You can say:_",
-    '  `adjust budget to €X` — change daily budget',
-    "  `regenerate copy` — get new ad copy suggestions",
-    "  `add keyword [text]` — add a keyword",
-    "  `remove keyword [text]` — remove a keyword",
-    "  `confirm` — create via API (PAUSED)",
-    "  `export csv` — download as Google Ads Editor CSV",
-    "  `cancel` — abort wizard",
+    "_You can modify:_ `adjust budget to €X` | `url https://...` | `path shop/sale` | `target BE, NL` | `rename to ...` | `add keyword ...` | `remove keyword ...` | `regenerate copy`",
+    "_Actions:_ `confirm` (API) | `export csv` (Google Ads Editor) | `show` | `cancel`",
   );
 
   return lines.join("\n");
