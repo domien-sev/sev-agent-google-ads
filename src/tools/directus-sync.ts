@@ -15,6 +15,14 @@ import type {
 } from "../types.js";
 
 /**
+ * Helper to execute Directus SDK commands against untyped custom collections.
+ * Centralizes the `as any` cast so individual sync functions stay clean.
+ */
+function directusRequest<T>(client: ReturnType<DirectusClientManager["getClient"]>, command: unknown): Promise<T> {
+  return (client as any).request(command) as Promise<T>;
+}
+
+/**
  * Sync keyword data from Google Ads to Directus.
  * Pulls keyword performance + quality scores and upserts into google_ads_keywords.
  */
@@ -83,22 +91,23 @@ export async function syncKeywords(
         last_synced: new Date().toISOString(),
       };
 
-      // Check if keyword already exists
       try {
-        // @ts-ignore — google_ads_keywords not in typed Directus schema
-        const readKw = readItems("google_ads_keywords", { filter: { keyword_text: { _eq: keywordText }, campaign_id: { _eq: campaignId }, ad_group_id: { _eq: adGroupId } }, limit: 1 });
-        const existing = await (client as any).request(readKw) as Array<{ id?: string }>;
+        const existing = await directusRequest<Array<{ id?: string }>>(
+          client,
+          readItems("google_ads_keywords" as any, {
+            filter: { keyword_text: { _eq: keywordText }, campaign_id: { _eq: campaignId }, ad_group_id: { _eq: adGroupId } },
+            limit: 1,
+          }),
+        );
 
         if (existing[0]?.id) {
-          // @ts-ignore — collection not in typed schema
-          await (client as any).request(updateItem("google_ads_keywords", existing[0].id, keywordData));
+          await directusRequest(client, updateItem("google_ads_keywords" as any, existing[0].id, keywordData as any));
         } else {
-          // @ts-ignore — collection not in typed schema
-          await (client as any).request(createItem("google_ads_keywords", keywordData));
+          await directusRequest(client, createItem("google_ads_keywords" as any, keywordData as any));
         }
         synced++;
       } catch {
-        // Collection may not exist yet, skip silently
+        // Collection may not exist yet — logged by caller
       }
     }
   }
@@ -156,11 +165,10 @@ export async function syncSearchTerms(
       };
 
       try {
-        // @ts-ignore — collection not in typed schema
-        await (client as any).request(createItem("google_ads_search_terms", searchTermData));
+        await directusRequest(client, createItem("google_ads_search_terms" as any, searchTermData as any));
         synced++;
       } catch {
-        // Skip duplicates or missing collection
+        // Skip duplicates or missing collection — logged by caller
       }
     }
   }
@@ -175,9 +183,6 @@ export async function syncAssetGroups(
   googleAds: GoogleAdsClient,
   directus: DirectusClientManager,
 ): Promise<number> {
-  const endDate = new Date().toISOString().split("T")[0];
-  const startDate = new Date(Date.now() - 30 * 86_400_000).toISOString().split("T")[0];
-
   const query = `
     SELECT
       campaign.id,
@@ -214,20 +219,22 @@ export async function syncAssetGroups(
       };
 
       try {
-        // @ts-ignore — google_ads_asset_groups not in typed Directus schema
-        const readAg = readItems("google_ads_asset_groups", { filter: { resource_name: { _eq: assetGroupData.resource_name } }, limit: 1 });
-        const existing = await (client as any).request(readAg) as Array<{ id?: string }>;
+        const existing = await directusRequest<Array<{ id?: string }>>(
+          client,
+          readItems("google_ads_asset_groups" as any, {
+            filter: { resource_name: { _eq: assetGroupData.resource_name } },
+            limit: 1,
+          }),
+        );
 
         if (existing[0]?.id) {
-          // @ts-ignore — collection not in typed schema
-          await (client as any).request(updateItem("google_ads_asset_groups", existing[0].id, assetGroupData));
+          await directusRequest(client, updateItem("google_ads_asset_groups" as any, existing[0].id, assetGroupData as any));
         } else {
-          // @ts-ignore — collection not in typed schema
-          await (client as any).request(createItem("google_ads_asset_groups", assetGroupData));
+          await directusRequest(client, createItem("google_ads_asset_groups" as any, assetGroupData as any));
         }
         synced++;
       } catch {
-        // Skip if collection doesn't exist
+        // Skip if collection doesn't exist — logged by caller
       }
     }
   }

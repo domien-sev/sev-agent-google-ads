@@ -21,19 +21,41 @@ export class GoogleAdsAgent extends BaseAgent {
   async onStart(): Promise<void> {
     this.logger.info("Initializing Google Ads agent...");
 
+    // Validate required environment variables
+    const requiredEnvVars = [
+      "DIRECTUS_URL",
+      "DIRECTUS_TOKEN",
+      "ANTHROPIC_API_KEY",
+    ] as const;
+
+    const googleAdsEnvVars = [
+      "GOOGLE_ADS_DEVELOPER_TOKEN",
+      "GOOGLE_ADS_CLIENT_ID",
+      "GOOGLE_ADS_CLIENT_SECRET",
+      "GOOGLE_ADS_REFRESH_TOKEN",
+      "GOOGLE_ADS_CUSTOMER_ID",
+    ] as const;
+
+    for (const envVar of requiredEnvVars) {
+      if (!process.env[envVar]) {
+        throw new Error(`Missing required env var: ${envVar}`);
+      }
+    }
+
     // Initialize Google Ads client
-    if (process.env.GOOGLE_ADS_DEVELOPER_TOKEN) {
+    const missingGoogleEnvVars = googleAdsEnvVars.filter((v) => !process.env[v]);
+    if (missingGoogleEnvVars.length === 0) {
       this.googleAds = new GoogleAdsClient({
-        developerToken: process.env.GOOGLE_ADS_DEVELOPER_TOKEN,
-        clientId: process.env.GOOGLE_ADS_CLIENT_ID ?? "",
-        clientSecret: process.env.GOOGLE_ADS_CLIENT_SECRET ?? "",
-        refreshToken: process.env.GOOGLE_ADS_REFRESH_TOKEN ?? "",
-        customerId: process.env.GOOGLE_ADS_CUSTOMER_ID ?? "",
+        developerToken: process.env.GOOGLE_ADS_DEVELOPER_TOKEN!,
+        clientId: process.env.GOOGLE_ADS_CLIENT_ID!,
+        clientSecret: process.env.GOOGLE_ADS_CLIENT_SECRET!,
+        refreshToken: process.env.GOOGLE_ADS_REFRESH_TOKEN!,
+        customerId: process.env.GOOGLE_ADS_CUSTOMER_ID!,
         managerCustomerId: process.env.GOOGLE_ADS_MANAGER_CUSTOMER_ID,
       });
       this.logger.info("Google Ads client initialized");
     } else {
-      this.logger.warn("GOOGLE_ADS_DEVELOPER_TOKEN not set — Google Ads API calls will fail");
+      this.logger.warn(`Google Ads API disabled — missing: ${missingGoogleEnvVars.join(", ")}`);
     }
 
     this.logger.info("Google Ads agent started");

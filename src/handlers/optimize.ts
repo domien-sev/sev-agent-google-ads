@@ -3,6 +3,23 @@ import type { GoogleAdsAgent } from "../agent.js";
 import * as gaql from "../tools/gaql.js";
 import { getQualityScoreBreakdown, findNegativeCandidates } from "../tools/keyword-planner.js";
 
+/** Campaigns with ROAS above this are candidates for budget increase */
+const HIGH_ROAS_THRESHOLD = 3;
+/** Campaigns with ROAS below this (with min spend) are flagged as underperforming */
+const LOW_ROAS_THRESHOLD = 1;
+/** Minimum spend (€) before a campaign is flagged as underperforming */
+const MIN_SPEND_FOR_FLAG = 10;
+/** CTR (%) below this triggers a low-CTR warning */
+const LOW_CTR_THRESHOLD = 1;
+/** Minimum spend (€) before a low-CTR campaign is flagged */
+const MIN_SPEND_FOR_CTR_FLAG = 5;
+/** Budget scale-up factor for high-ROAS campaigns */
+const BUDGET_SCALE_UP = 1.5;
+/** Budget rebalance scale-up factor (more conservative than full optimization) */
+const REBALANCE_SCALE_UP = 1.3;
+/** Budget rebalance scale-down factor for underperformers */
+const REBALANCE_SCALE_DOWN = 0.7;
+
 /**
  * Optimization handler — budget reallocation, bid adjustments, quality score.
  *
@@ -81,13 +98,13 @@ async function handleFullOptimization(
   ];
 
   // 1. Budget recommendations
-  const highRoas = campaigns.filter((c) => c.roas > 3 && c.cost > 0).sort((a, b) => b.roas - a.roas);
-  const lowRoas = campaigns.filter((c) => c.roas < 1 && c.cost > 10).sort((a, b) => a.roas - b.roas);
+  const highRoas = campaigns.filter((c) => c.roas > HIGH_ROAS_THRESHOLD && c.cost > 0).sort((a, b) => b.roas - a.roas);
+  const lowRoas = campaigns.filter((c) => c.roas < LOW_ROAS_THRESHOLD && c.cost > MIN_SPEND_FOR_FLAG).sort((a, b) => a.roas - b.roas);
 
   if (highRoas.length > 0) {
     lines.push("*Budget Scale-Up Opportunities:*");
     for (const c of highRoas.slice(0, 3)) {
-      const suggestedBudget = Math.round(c.budget * 1.5);
+      const suggestedBudget = Math.round(c.budget * BUDGET_SCALE_UP);
       lines.push(
         `  *${c.name}* — ROAS ${c.roas.toFixed(2)}x, current €${c.budget.toFixed(0)}/day → suggest €${suggestedBudget}/day`,
       );
@@ -127,7 +144,7 @@ async function handleFullOptimization(
   }
 
   // 4. Low CTR campaigns
-  const lowCtr = campaigns.filter((c) => c.ctr < 1 && c.cost > 5);
+  const lowCtr = campaigns.filter((c) => c.ctr < LOW_CTR_THRESHOLD && c.cost > MIN_SPEND_FOR_CTR_FLAG);
   if (lowCtr.length > 0) {
     lines.push("*Low CTR Campaigns (< 1%):*");
     for (const c of lowCtr.slice(0, 3)) {
@@ -206,11 +223,11 @@ async function handleBudgetRebalance(
     let suggestedBudget = c.budget;
     let change = "";
 
-    if (c.roas > 3) {
-      suggestedBudget = Math.round(c.budget * 1.3);
+    if (c.roas > HIGH_ROAS_THRESHOLD) {
+      suggestedBudget = Math.round(c.budget * REBALANCE_SCALE_UP);
       change = `+${((suggestedBudget - c.budget) / c.budget * 100).toFixed(0)}%`;
-    } else if (c.roas < 1 && c.cost > 10) {
-      suggestedBudget = Math.round(c.budget * 0.7);
+    } else if (c.roas < LOW_ROAS_THRESHOLD && c.cost > MIN_SPEND_FOR_FLAG) {
+      suggestedBudget = Math.round(c.budget * REBALANCE_SCALE_DOWN);
       change = `${((suggestedBudget - c.budget) / c.budget * 100).toFixed(0)}%`;
     } else {
       change = "—";

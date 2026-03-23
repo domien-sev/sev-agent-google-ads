@@ -23,6 +23,13 @@ export interface NegativeKeywordCandidate {
   reason: string;
 }
 
+/** Minimum spend (€) with 0 conversions before flagging as negative candidate */
+const NEGATIVE_SPEND_THRESHOLD = 5;
+/** Minimum clicks with 0 conversions (+ min spend) before flagging */
+const NEGATIVE_CLICK_THRESHOLD = 10;
+/** Minimum spend (€) for click-based negative flagging */
+const NEGATIVE_CLICK_MIN_SPEND = 2;
+
 /**
  * Analyze search terms and find negative keyword candidates.
  * Looks for high-cost, low-conversion terms.
@@ -64,7 +71,7 @@ export async function findNegativeCandidates(
       const searchTerm = String(row.searchTermView?.searchTerm ?? "");
 
       // Flag terms with spend but no conversions, or very low CTR
-      if (cost > 5 && conversions === 0) {
+      if (cost > NEGATIVE_SPEND_THRESHOLD && conversions === 0) {
         candidates.push({
           searchTerm,
           impressions,
@@ -73,7 +80,7 @@ export async function findNegativeCandidates(
           conversions,
           reason: `Spent €${cost.toFixed(2)} with 0 conversions`,
         });
-      } else if (clicks > 10 && conversions === 0 && cost > 2) {
+      } else if (clicks > NEGATIVE_CLICK_THRESHOLD && conversions === 0 && cost > NEGATIVE_CLICK_MIN_SPEND) {
         candidates.push({
           searchTerm,
           impressions,
@@ -110,7 +117,7 @@ export async function addNegativeKeywords(
         },
       },
     }));
-    const result = await (client as any).mutateResource("campaignCriteria", ops);
+    const result = await client.mutateResource("campaignCriteria", ops);
     return result.results.length;
   }
 
@@ -128,7 +135,7 @@ export async function addNegativeKeywords(
       },
     },
   }));
-  const result = await (client as any).mutateResource("adGroupCriteria", ops);
+  const result = await client.mutateResource("adGroupCriteria", ops);
   return result.results.length;
 }
 

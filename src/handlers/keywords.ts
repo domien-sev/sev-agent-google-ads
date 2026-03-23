@@ -99,7 +99,9 @@ async function handleKeywordOverview(
   }
 
   // Sync to Directus in background
-  syncKeywords(agent.googleAds, agent.directus).catch(() => {});
+  syncKeywords(agent.googleAds, agent.directus).catch((err) =>
+    agent.log.warn(`Keyword sync failed: ${err instanceof Error ? err.message : String(err)}`),
+  );
 
   return {
     channel_id: message.channel_id,
@@ -199,7 +201,9 @@ async function handleSearchTerms(
   }
 
   // Sync to Directus in background
-  syncSearchTerms(agent.googleAds, agent.directus).catch(() => {});
+  syncSearchTerms(agent.googleAds, agent.directus).catch((err) =>
+    agent.log.warn(`Search term sync failed: ${err instanceof Error ? err.message : String(err)}`),
+  );
 
   return {
     channel_id: message.channel_id,
