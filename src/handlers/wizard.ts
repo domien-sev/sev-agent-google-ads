@@ -70,6 +70,7 @@ function getSession(channelId: string, userId: string): WizardState | null {
 export function isWizardMessage(text: string, channelId: string, userId: string): boolean {
   const lower = text.trim().toLowerCase();
   if (lower === "wizard" || lower.startsWith("campaign wizard")) return true;
+  if (lower.startsWith("clone ") || lower.startsWith("event ") || lower === "events") return true;
   return getSession(channelId, userId) !== null;
 }
 
@@ -92,6 +93,18 @@ export async function handleWizard(
   const existing = getSession(message.channel_id, message.user_id);
 
   if (!existing) {
+    // Direct commands — auto-start wizard and handle immediately
+    if (lower.startsWith("clone ") || lower.startsWith("event ") || lower === "events") {
+      const session: WizardState = {
+        step: "awaiting_type",
+        threadTs: message.thread_ts ?? message.ts,
+        channelId: message.channel_id,
+        userId: message.user_id,
+        createdAt: Date.now(),
+      };
+      sessions.set(key, session);
+      return handleTypeSelection(agent, message, session, key);
+    }
     return startWizard(agent, message, key);
   }
 
