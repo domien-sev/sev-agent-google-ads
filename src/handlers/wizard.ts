@@ -21,6 +21,13 @@ import {
 import type { WizardRecommendations } from "../tools/ai-recommendations.js";
 import { buildCampaign } from "../tools/campaign-builder.js";
 import { generateEditorCsv, formatCsvForSlack } from "../tools/csv-export.js";
+import {
+  getActiveEvents,
+  findEvent,
+  formatEventList,
+  eventToAiContext,
+  isEventSourceConfigured,
+} from "../tools/event-source.js";
 import type { CampaignConfig } from "../types.js";
 import * as gaql from "../tools/gaql.js";
 
@@ -116,10 +123,14 @@ async function startWizard(
     createdAt: Date.now(),
   });
 
-  return reply(message, [
+  const lines = [
     "*Campaign Creation Wizard*",
     "",
     "What would you like to create?",
+    "",
+    "*From event:*",
+    "  `events` — Browse active events from shoppingeventvip.be",
+    "  `event [brand/name]` — Create campaign for a specific event",
     "",
     "*New campaign:*",
     "  `search` — Search ads on Google",
@@ -132,7 +143,13 @@ async function startWizard(
     '  `clone [campaign name or ID]` — Copy structure from an existing campaign',
     "",
     "Or type `cancel` to abort.",
-  ].join("\n"));
+  ];
+
+  if (!isEventSourceConfigured()) {
+    lines.splice(4, 3); // Remove event options if not configured
+  }
+
+  return reply(message, lines.join("\n"));
 }
 
 /** Step 2: Handle type selection or clone request */
@@ -143,6 +160,62 @@ async function handleTypeSelection(
   key: string,
 ): Promise<AgentResponse> {
   const lower = message.text.trim().toLowerCase();
+
+  // Browse events
+  if (lower === "events" || lower === "browse events") {
+    try {
+      const events = await getActiveEvents();
+      return reply(message, formatEventList(events));
+    } catch (err) {
+      return reply(message, `Could not fetch events: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
+  // Create from event
+  if (lower.startsWith("event ")) {
+    const eventQuery = message.text.trim().replace(/^event\s+/i, "").trim();
+    try {
+      const event = await findEvent(eventQuery);
+      if (!event) {
+        return reply(message, `Event "${eventQuery}" not found. Try \`events\` to browse active events.`);
+      }
+
+      session.step = "analyzing";
+      sessions.set(key, session);
+
+      // Default to search campaign for events
+      session.campaignType = "search";
+
+      const recommendations = await generateRecommendations({
+        campaignType: "search",
+        brandOrProduct: eventToAiContext(event),
+      });
+
+      // Override URL with event URL if available
+      if (event.url) {
+        recommendations.finalUrl = event.url;
+      }
+
+      session.recommendations = recommendations;
+      session.step = "reviewing";
+      sessions.set(key, session);
+
+      return reply(message, [
+        `*Event found: "${event.titleNl}"*`,
+        `Brands: ${event.brands.join(", ") || "—"}`,
+        `Dates: ${event.startDate?.split("T")[0] ?? "?"} → ${event.endDate?.split("T")[0] ?? "?"}`,
+        `URL: ${event.url ?? "—"}`,
+        "",
+        "---",
+        "",
+        formatRecommendations(recommendations),
+      ].join("\n"));
+    } catch (err) {
+      session.step = "awaiting_type";
+      sessions.set(key, session);
+      return reply(message, `Error: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
 
   // Clone flow
   if (lower.startsWith("clone")) {
