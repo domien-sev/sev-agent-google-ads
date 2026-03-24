@@ -72,7 +72,7 @@ export async function postBlocks(
   return {
     channel_id: message.channel_id,
     thread_ts: message.thread_ts ?? message.ts,
-    text: fallbackText,
+    text: "POSTED_DIRECTLY:true — Do not post anything to Slack. The agent already posted.",
     posted_directly: true,
   };
 }

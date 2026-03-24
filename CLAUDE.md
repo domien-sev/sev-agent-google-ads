@@ -141,3 +141,8 @@ This agent uses `@domien-sev/*` packages from GitHub Packages.
 - In Coolify, `GH_PKG_TOKEN` must be set as an env var
 - See `sev-ai-core/CLAUDE.md` for full GitHub setup details
 
+
+
+## Project Pickup
+
+See [`PICKUP.md`](../PICKUP.md) in the project root for all unfinished projects and their remaining tasks.
