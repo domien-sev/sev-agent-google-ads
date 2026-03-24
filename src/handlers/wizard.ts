@@ -24,6 +24,7 @@ import { generateEditorCsv, formatCsvForSlack } from "../tools/csv-export.js";
 import {
   getActiveEvents,
   findEvent,
+  findEventForBrand,
   formatEventList,
   eventToAiContext,
   isEventSourceConfigured,
@@ -260,11 +261,40 @@ async function handleTypeSelection(
     session.sourceStructure = structure;
     session.campaignType = mapChannelType(structure.type);
 
-    // Generate AI recommendations based on source
+    // Auto-match: find the latest event for this brand
+    let eventContext: string | undefined;
+    let eventInfo = "";
+    let matchedEventUrl: string | null = null;
+    if (isEventSourceConfigured()) {
+      try {
+        const matchedEvent = await findEventForBrand(structure.name);
+        if (matchedEvent) {
+          eventContext = eventToAiContext(matchedEvent);
+          matchedEventUrl = matchedEvent.url;
+          eventInfo = [
+            "",
+            `*Event matched: "${matchedEvent.titleNl}"*`,
+            `Dates: ${matchedEvent.dateTextNl ?? matchedEvent.startDate?.split("T")[0] ?? "?"}`,
+            `Type: ${matchedEvent.type}`,
+            matchedEvent.url ? `URL: ${matchedEvent.url}` : "",
+          ].filter(Boolean).join("\n");
+        }
+      } catch {
+        // Non-critical — proceed without event data
+      }
+    }
+
+    // Generate AI recommendations with source + event context
     const recommendations = await generateRecommendations({
       source: structure,
       campaignType: structure.type,
+      brandOrProduct: eventContext,
     });
+
+    // Override URL with event URL if matched
+    if (matchedEventUrl) {
+      recommendations.finalUrl = matchedEventUrl;
+    }
 
     session.recommendations = recommendations;
     session.step = "reviewing";
@@ -272,10 +302,11 @@ async function handleTypeSelection(
 
     return reply(message, [
       formatCampaignSummary(structure),
+      eventInfo,
       "---",
       "",
       formatRecommendations(recommendations),
-    ].join("\n"));
+    ].filter(Boolean).join("\n"));
   }
 
   // Direct type selection
