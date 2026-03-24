@@ -132,3 +132,12 @@ See `.env.example` for the full list. Key ones:
 - When new creatives needed: creates a `TaskDelegation` record → ads agent generates → callback to `/callbacks/task`
 - Both agents read from same `ad_campaigns`, `ad_performance` collections
 - Shared `#ads-review` channel for campaign/creative approval
+
+## GitHub Packages
+
+This agent uses `@domien-sev/*` packages from GitHub Packages.
+- `.npmrc` uses `GH_PKG_TOKEN` env var for auth (NOT `GITHUB_TOKEN` — Coolify overrides that)
+- Dockerfile uses `ARG GH_PKG_TOKEN` for Docker builds
+- In Coolify, `GH_PKG_TOKEN` must be set as an env var
+- See `sev-ai-core/CLAUDE.md` for full GitHub setup details
+
