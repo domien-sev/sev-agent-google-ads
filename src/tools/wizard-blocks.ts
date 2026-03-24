@@ -36,11 +36,11 @@ export function wizardStartBlocks(
       sectionBlock(":arrow_right_hook: *Clone existing campaign:*"),
     );
 
-    // Show top 5 as buttons
-    const cloneButtons = recentCampaigns.slice(0, 5).map((c) => {
+    // Show top 5 as buttons (unique action_id per button)
+    const cloneButtons = recentCampaigns.slice(0, 5).map((c, i) => {
       const typeShort = { SEARCH: "S", SHOPPING: "SH", PERFORMANCE_MAX: "PM", DISPLAY: "D", VIDEO: "YT" }[c.type] ?? "?";
       const label = `${c.name} [${typeShort}]`.slice(0, 75);
-      return buttonElement(label, "wizard_clone", c.name);
+      return buttonElement(label, `wizard_clone_${i}`, c.name);
     });
 
     blocks.push(actionsBlock(cloneButtons, "wizard_clone_actions"));
@@ -66,11 +66,11 @@ export function wizardStartBlocks(
     dividerBlock(),
     sectionBlock(":new: *New campaign:*"),
     actionsBlock([
-      buttonElement("Search", "wizard_type", "search"),
-      buttonElement("Shopping", "wizard_type", "shopping"),
-      buttonElement("PMax", "wizard_type", "pmax"),
-      buttonElement("Display", "wizard_type", "display"),
-      buttonElement("YouTube", "wizard_type", "youtube"),
+      buttonElement("Search", "wizard_type_search", "search"),
+      buttonElement("Shopping", "wizard_type_shopping", "shopping"),
+      buttonElement("PMax", "wizard_type_pmax", "pmax"),
+      buttonElement("Display", "wizard_type_display", "display"),
+      buttonElement("YouTube", "wizard_type_youtube", "youtube"),
     ], "wizard_type_actions"),
     dividerBlock(),
     contextBlock(["Type `cancel` to abort."]),
@@ -90,7 +90,8 @@ export function eventListBlocks(events: EventData[]): SlackBlock[] {
     headerBlock(`Active Events (${events.length})`),
   ];
 
-  for (const e of events.slice(0, 15)) {
+  for (let i = 0; i < Math.min(events.length, 15); i++) {
+    const e = events[i];
     const brands = e.brands.length > 0 ? e.brands.join(", ") : "—";
     const dates = e.dateTextNl ?? `${e.startDate?.split("T")[0] ?? "?"} → ${e.endDate?.split("T")[0] ?? "?"}`;
     const typeEmoji = e.type === "online" ? ":globe_with_meridians:" : ":round_pushpin:";
@@ -98,7 +99,7 @@ export function eventListBlocks(events: EventData[]): SlackBlock[] {
     blocks.push(
       sectionWithAccessory(
         `${typeEmoji} *${e.titleNl}*\n${brands} · ${dates}`,
-        buttonElement("Use", "wizard_event_select", e.id),
+        buttonElement("Use", `wizard_event_${i}`, e.id),
       ),
     );
   }

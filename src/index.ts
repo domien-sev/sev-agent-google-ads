@@ -75,22 +75,23 @@ async function main() {
         const messageTs = payload.message?.ts ?? "";
 
         // Map action_id to wizard text commands
+        const aid = action.action_id;
         let text = action.value;
-        if (action.action_id === "wizard_type") {
+        if (aid.startsWith("wizard_type_")) {
           text = action.value; // "search", "shopping", etc.
-        } else if (action.action_id === "wizard_events") {
+        } else if (aid === "wizard_events") {
           text = "events";
-        } else if (action.action_id === "wizard_event_select") {
+        } else if (aid.startsWith("wizard_event_")) {
           text = `event_select:${action.value}`;
-        } else if (action.action_id === "wizard_confirm") {
+        } else if (aid === "wizard_confirm") {
           text = "confirm";
-        } else if (action.action_id === "wizard_csv") {
+        } else if (aid === "wizard_csv") {
           text = "export csv";
-        } else if (action.action_id === "wizard_regenerate") {
+        } else if (aid === "wizard_regenerate") {
           text = "regenerate copy";
-        } else if (action.action_id === "wizard_clone") {
+        } else if (aid.startsWith("wizard_clone_")) {
           text = `clone ${action.value}`;
-        } else if (action.action_id === "wizard_cancel") {
+        } else if (aid === "wizard_cancel") {
           text = "cancel";
         }
 
