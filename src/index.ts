@@ -88,6 +88,8 @@ async function main() {
           text = "export csv";
         } else if (action.action_id === "wizard_regenerate") {
           text = "regenerate copy";
+        } else if (action.action_id === "wizard_clone") {
+          text = `clone ${action.value}`;
         } else if (action.action_id === "wizard_cancel") {
           text = "cancel";
         }

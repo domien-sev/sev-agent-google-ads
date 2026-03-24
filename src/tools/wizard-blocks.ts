@@ -20,25 +20,51 @@ import {
 
 // --- Step 1: Wizard Start ---
 
-export function wizardStartBlocks(showEvents: boolean): SlackBlock[] {
+export function wizardStartBlocks(
+  showEvents: boolean,
+  recentCampaigns?: Array<{ name: string; type: string; cost: number }>,
+): SlackBlock[] {
   const blocks: SlackBlock[] = [
     headerBlock("Campaign Creation Wizard"),
     sectionBlock("What would you like to create?"),
-    dividerBlock(),
   ];
 
+  // Clone from existing campaign
+  if (recentCampaigns && recentCampaigns.length > 0) {
+    blocks.push(
+      dividerBlock(),
+      sectionBlock(":arrow_right_hook: *Clone existing campaign:*"),
+    );
+
+    // Show top 5 as buttons
+    const cloneButtons = recentCampaigns.slice(0, 5).map((c) => {
+      const typeShort = { SEARCH: "S", SHOPPING: "SH", PERFORMANCE_MAX: "PM", DISPLAY: "D", VIDEO: "YT" }[c.type] ?? "?";
+      const label = `${c.name} [${typeShort}]`.slice(0, 75);
+      return buttonElement(label, "wizard_clone", c.name);
+    });
+
+    blocks.push(actionsBlock(cloneButtons, "wizard_clone_actions"));
+
+    if (recentCampaigns.length > 5) {
+      blocks.push(contextBlock([`+ ${recentCampaigns.length - 5} more — type \`clone [campaign name]\` for any campaign`]));
+    }
+  }
+
+  // From event
   if (showEvents) {
     blocks.push(
-      sectionBlock("*From event:*"),
+      dividerBlock(),
+      sectionBlock(":calendar: *From event:*"),
       actionsBlock([
         buttonElement("Browse Events", "wizard_events", "events"),
       ], "wizard_events_actions"),
-      dividerBlock(),
     );
   }
 
+  // New campaign
   blocks.push(
-    sectionBlock("*New campaign:*"),
+    dividerBlock(),
+    sectionBlock(":new: *New campaign:*"),
     actionsBlock([
       buttonElement("Search", "wizard_type", "search"),
       buttonElement("Shopping", "wizard_type", "shopping"),
@@ -47,7 +73,7 @@ export function wizardStartBlocks(showEvents: boolean): SlackBlock[] {
       buttonElement("YouTube", "wizard_type", "youtube"),
     ], "wizard_type_actions"),
     dividerBlock(),
-    contextBlock(["Type `clone [campaign name]` to copy an existing campaign, or `cancel` to abort."]),
+    contextBlock(["Type `cancel` to abort."]),
   );
 
   return blocks;

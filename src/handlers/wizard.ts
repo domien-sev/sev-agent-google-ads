@@ -146,9 +146,9 @@ export async function handleWizard(
   }
 }
 
-/** Step 1: Start the wizard — show buttons for type selection */
+/** Step 1: Start the wizard — show buttons for type selection + recent campaigns */
 async function startWizard(
-  _agent: GoogleAdsAgent,
+  agent: GoogleAdsAgent,
   message: RoutedMessage,
   key: string,
 ): Promise<WizardResponse> {
@@ -162,9 +162,34 @@ async function startWizard(
     createdAt: Date.now(),
   });
 
+  // Fetch recent campaigns for "clone" suggestions
+  let recentCampaigns: Array<{ name: string; type: string; cost: number }> = [];
+  try {
+    const results = await agent.googleAds.query(`
+      SELECT campaign.name, campaign.advertising_channel_type, metrics.cost_micros
+      FROM campaign
+      WHERE campaign.status != 'REMOVED'
+        AND metrics.impressions > 0
+      ORDER BY metrics.cost_micros DESC
+      LIMIT 10
+    `) as Array<{ results?: Array<Record<string, any>> }>;
+
+    for (const batch of results) {
+      for (const row of batch.results ?? []) {
+        recentCampaigns.push({
+          name: String(row.campaign?.name ?? ""),
+          type: String(row.campaign?.advertisingChannelType ?? ""),
+          cost: Number(row.metrics?.costMicros ?? 0) / 1_000_000,
+        });
+      }
+    }
+  } catch {
+    // Non-critical — wizard works without campaign suggestions
+  }
+
   return postBlocksOrText(
     message,
-    wizardStartBlocks(isEventSourceConfigured()),
+    wizardStartBlocks(isEventSourceConfigured(), recentCampaigns),
     "Campaign Creation Wizard — type `search`, `shopping`, `pmax`, `display`, `youtube`, `events`, or `clone [name]`",
   );
 }
