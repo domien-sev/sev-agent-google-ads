@@ -30,6 +30,8 @@ export interface WizardRecommendations {
   path1: string;
   path2: string;
   endDate?: string;
+  callouts?: string[];
+  promotionText?: string;
 }
 
 /**
@@ -124,6 +126,8 @@ Generate a complete campaign recommendation as JSON. Requirements:
 - finalUrl: landing page URL (derive from source ads or event URL if available)
 - path1, path2: display URL paths (max 15 chars each, relevant to brand/product)
 - endDate: campaign end date in YYYY-MM-DD format. If event dates are provided, set this to the day after the last event day. Otherwise omit.
+- callouts: 4-6 short callout texts (max 25 chars STRICT). Highlight USPs, offers, unique selling points. Examples: "Tot -70% Korting", "Topmerken Outlet", "Beperkte Plaatsen", "Gratis Parking"
+- promotionText: short promotion description for Google Ads promotion asset (e.g. "Outlet Verkoop Marie Méro")
 
 Respond with ONLY valid JSON matching this structure:
 {
@@ -138,7 +142,9 @@ Respond with ONLY valid JSON matching this structure:
   "finalUrl": "string",
   "path1": "string",
   "path2": "string",
-  "endDate": "string or null"
+  "endDate": "string or null",
+  "callouts": ["string (max 25 chars each, 4-6 items, bilingual USPs like 'Tot -70% Korting')"],
+  "promotionText": "string (short promo description for promotion asset, e.g. 'Outlet Verkoop Marie Méro')"
 }`,
       },
     ],

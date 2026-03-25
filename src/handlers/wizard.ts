@@ -36,6 +36,7 @@ import { isSlackConfigured, slackPost } from "../tools/slack.js";
 import { storeAdCopy, retrieveSimilarAds, formatAdsForPrompt, extractBrand } from "../tools/ad-memory.js";
 import { searchBrandContext, searchEventContext } from "../tools/brand-knowledge.js";
 import { createRedTrackCampaign, isRedTrackConfigured } from "../tools/redtrack.js";
+import { createCampaignAssets, generateEventSitelinks, generateEventCallouts } from "../tools/asset-builder.js";
 import {
   wizardStartBlocks,
   eventListBlocks,
@@ -1120,6 +1121,36 @@ async function confirmAndBuild(
       }
     }
 
+    // Create campaign assets (sitelinks, callouts, structured snippets, promotion)
+    let assetSummary = "";
+    try {
+      const ec = session.eventConfig;
+      const primaryLang = (languages[0] ?? "nl") as "nl" | "fr";
+      const eventUrl = ec?.landingPageUrl ?? rec.finalUrl;
+
+      const assetResult = await createCampaignAssets(agent.googleAds, result.campaignResourceName, {
+        sitelinks: generateEventSitelinks(eventUrl, primaryLang),
+        callouts: rec.callouts ?? generateEventCallouts(primaryLang, ec?.event.type === "physical", ec?.event.type === "physical"),
+        brands: ec?.event.brands,
+        promotionText: rec.promotionText ?? `Outlet ${extractBrand(rec.campaignName)}`,
+        discountPercent: 70,
+        finalUrl: eventUrl,
+        eventStartDate: ec?.event.startDate?.split("T")[0],
+        eventEndDate: ec?.campaignEndDate,
+        language: primaryLang,
+        eventType: ec?.event.type ?? "physical",
+      });
+
+      const parts: string[] = [];
+      if (assetResult.sitelinks > 0) parts.push(`${assetResult.sitelinks} sitelinks`);
+      if (assetResult.callouts > 0) parts.push(`${assetResult.callouts} callouts`);
+      if (assetResult.structuredSnippets > 0) parts.push(`${assetResult.structuredSnippets} structured snippets`);
+      if (assetResult.promotions > 0) parts.push(`${assetResult.promotions} promotions`);
+      if (parts.length > 0) assetSummary = `Assets: ${parts.join(", ")}`;
+    } catch (err) {
+      console.warn(`[wizard] Asset creation failed (non-fatal): ${err instanceof Error ? err.message : String(err)}`);
+    }
+
     // Keep session alive for post-creation commands
     session.step = "created";
     session.created = {
@@ -1161,6 +1192,7 @@ async function confirmAndBuild(
         adGroupResource: result.adGroupResourceName,
         assetGroupResource: result.assetGroupResourceName,
         warning: result.adWarning,
+        assets: assetSummary || undefined,
       }),
       `Campaign Created: ${rec.campaignName}`,
     );

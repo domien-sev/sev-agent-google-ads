@@ -294,6 +294,7 @@ export function confirmationBlocks(opts: {
   adGroupResource?: string;
   assetGroupResource?: string;
   warning?: string;
+  assets?: string;
 }): SlackBlock[] {
   const blocks: SlackBlock[] = [
     headerBlock("Campaign Created"),
@@ -314,6 +315,10 @@ export function confirmationBlocks(opts: {
   }
   if (opts.assetGroupResource) {
     blocks.push(sectionBlock(`*Asset Group:* \`${opts.assetGroupResource}\``));
+  }
+
+  if (opts.assets) {
+    blocks.push(sectionBlock(`:white_check_mark: ${opts.assets}`));
   }
 
   if (opts.warning) {
