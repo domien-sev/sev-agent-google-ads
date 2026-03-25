@@ -40,8 +40,9 @@ export async function generateRecommendations(opts: {
   brandOrProduct?: string;
   campaignType?: string;
   userNotes?: string;
+  ragContext?: string;
 }): Promise<WizardRecommendations> {
-  const { source, brandOrProduct, userNotes } = opts;
+  const { source, brandOrProduct, userNotes, ragContext } = opts;
 
   let context = "";
   if (source) {
@@ -91,15 +92,22 @@ Existing URL paths: ${existingPaths.join(", ") || "none"}
     context += `\nUser notes: ${userNotes}`;
   }
 
+  // Inject RAG context (brand knowledge from Onyx + past ad copy from pgvector)
+  let ragSection = "";
+  if (ragContext) {
+    ragSection = `\n\n${ragContext}\n`;
+  }
+
   const response = await anthropic.messages.create({
     model: "claude-sonnet-4-20250514",
     max_tokens: 4096,
     messages: [
       {
         role: "user",
-        content: `You are a Google Ads specialist. Your job is to create campaign recommendations based on the context provided below. Analyze the source data carefully and create relevant, high-quality campaigns.
+        content: `You are a Google Ads specialist for Shopping Event VIP, a Belgian fashion outlet platform. Your job is to create campaign recommendations based on the context provided below. Analyze the source data carefully and create relevant, high-quality campaigns.
 
 ${context}
+${ragSection}
 
 Generate a complete campaign recommendation as JSON. Requirements:
 - campaignName: descriptive name with date prefix (YYMMDD format, today is ${new Date().toISOString().split("T")[0]}). Derive the brand/product name from the context.

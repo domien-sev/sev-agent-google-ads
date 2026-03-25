@@ -147,6 +147,17 @@ This agent uses `@domien-sev/*` packages from GitHub Packages.
 
 Use `/codex [prompt]` or say "ask codex to review..." to get a second opinion from OpenAI Codex CLI (gpt-5.4). Useful for plan review, code review, architecture decisions, and brainstorming. Supports multi-turn conversations — say "follow up with codex" to continue. Script at `sev-ai-core/.claude/skills/codex/scripts/codex_chat.py`.
 
+## Plan Mode Behavior (MANDATORY)
+
+When entering plan mode (via `/plan` or `EnterPlanMode`), you MUST:
+
+1. **Draft the plan** as usual (architecture, steps, trade-offs)
+2. **Present the plan to Codex** — invoke `/codex` with the full plan and ask for critique, alternatives, and blind spots
+3. **Iterate** — review Codex's feedback, refine the plan, and send it back to Codex until both perspectives converge
+4. **Present the final plan** to the user only after the Claude ↔ Codex loop produces a solid, reviewed plan
+
+This back-and-forth ensures every plan gets a second AI opinion before execution. Minimum 1 round-trip with Codex; continue if either side raises unresolved concerns.
+
 ## Project Pickup
 
 See [`PICKUP.md`](../PICKUP.md) in the project root for all unfinished projects and their remaining tasks.

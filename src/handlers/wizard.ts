@@ -33,6 +33,8 @@ import type { CampaignConfig } from "../types.js";
 import { reply, postBlocks } from "../tools/reply.js";
 import type { DirectPostResponse } from "../tools/reply.js";
 import { isSlackConfigured, slackPost } from "../tools/slack.js";
+import { storeAdCopy, retrieveSimilarAds, formatAdsForPrompt, extractBrand } from "../tools/ad-memory.js";
+import { searchBrandContext, searchEventContext } from "../tools/brand-knowledge.js";
 import {
   wizardStartBlocks,
   eventListBlocks,
@@ -110,6 +112,35 @@ async function postBlocksOrText(
     return postBlocks(message, blocks, fallbackText);
   }
   return reply(message, fallbackText);
+}
+
+/**
+ * Gather RAG context from both Onyx (brand knowledge) and pgvector (past ads).
+ * Non-fatal — returns empty string if either source fails.
+ */
+async function gatherRagContext(
+  brand: string,
+  eventType = "generic",
+  campaignType = "search",
+): Promise<string> {
+  const parts: string[] = [];
+
+  try {
+    // Parallel retrieval from both sources
+    const [brandCtx, eventCtx, similarAds] = await Promise.all([
+      searchBrandContext(brand, eventType, campaignType).catch(() => ""),
+      searchEventContext(eventType, brand).catch(() => ""),
+      retrieveSimilarAds(brand, eventType, campaignType).catch(() => [] as any[]),
+    ]);
+
+    if (brandCtx) parts.push(brandCtx);
+    if (eventCtx) parts.push(eventCtx);
+    if (similarAds.length > 0) parts.push(formatAdsForPrompt(similarAds));
+  } catch (err) {
+    console.warn("[wizard] RAG context gathering failed:", err instanceof Error ? err.message : String(err));
+  }
+
+  return parts.join("\n\n");
 }
 
 /** Check if a message should be handled by the wizard */
@@ -307,9 +338,13 @@ async function handleEventSelection(
     session.campaignType = "search";
     sessions.set(key, session);
 
+    const eventBrand = event.brands[0] ?? event.titleNl;
+    const eventRag = await gatherRagContext(eventBrand, event.type, "search");
+
     const recommendations = await generateRecommendations({
       campaignType: "search",
       brandOrProduct: eventToAiContext(event),
+      ragContext: eventRag,
     });
 
     if (event.url) recommendations.finalUrl = event.url;
@@ -387,10 +422,14 @@ async function handleClone(
     } catch { /* non-critical */ }
   }
 
+  const cloneBrand = extractBrand(structure.name);
+  const cloneRag = await gatherRagContext(cloneBrand, "generic", structure.type);
+
   const recommendations = await generateRecommendations({
     source: structure,
     campaignType: structure.type,
     brandOrProduct: eventContext,
+    ragContext: cloneRag,
   });
 
   if (matchedEventUrl) recommendations.finalUrl = matchedEventUrl;
@@ -446,9 +485,14 @@ async function handleContext(
   session.step = "analyzing";
   sessions.set(key, session);
 
+  // Gather RAG context from Onyx + pgvector
+  const brand = extractBrand(enrichedContext.split(",")[0].trim());
+  const ragContext = await gatherRagContext(brand, "generic", session.campaignType ?? "search");
+
   const recommendations = await generateRecommendations({
     campaignType: session.campaignType,
     brandOrProduct: enrichedContext,
+    ragContext,
   });
 
   // If event was detected, set end date and URL from event
@@ -699,6 +743,25 @@ async function confirmAndBuild(
       assetGroupResourceName: result.assetGroupResourceName,
     };
     sessions.set(key, session);
+
+    // Store ad copy for future RAG retrieval (non-fatal)
+    if (rec.adCopy.nl.headlines.length > 0) {
+      storeAdCopy({
+        brand: extractBrand(rec.campaignName),
+        eventType: rec.endDate ? "physical" : "generic",
+        campaignType: type,
+        language: "nl",
+        headlines: rec.adCopy.nl.headlines,
+        descriptions: rec.adCopy.nl.descriptions,
+        finalUrl: rec.finalUrl,
+        path1: rec.path1,
+        path2: rec.path2,
+        keywords: rec.keywords,
+        campaignName: rec.campaignName,
+        eventDates: rec.endDate,
+        feedbackApplied: [],
+      }).catch((err) => console.warn("[wizard] Ad memory store failed:", err));
+    }
 
     return postBlocksOrText(
       message,
@@ -1069,12 +1132,16 @@ async function generateAdPreview(
   }
 
   try {
+    const adBrand = extractBrand(rec.campaignName);
+    const adRag = await gatherRagContext(adBrand, "generic", "search");
+
     const aiRec = await generateRecommendations({
       campaignType: "search",
       brandOrProduct: `Campaign: ${rec.campaignName}. Landing page: ${finalUrl}`,
       userNotes: session.pendingAd?.feedbackHistory.length
         ? `Previous feedback: ${session.pendingAd.feedbackHistory.join("; ")}`
         : undefined,
+      ragContext: adRag,
     });
 
     session.pendingAd = {
@@ -1119,10 +1186,14 @@ async function regenerateAd(
       `Current descriptions: ${pending.descriptions.map(d => `"${d}"`).join(", ")}`,
     ].join("\n");
 
+    const regenBrand = extractBrand(rec.campaignName);
+    const regenRag = await gatherRagContext(regenBrand, "generic", "search");
+
     const aiRec = await generateRecommendations({
       campaignType: "search",
       brandOrProduct: `Campaign: ${rec.campaignName}. Landing page: ${pending.finalUrl}`,
       userNotes: `${currentCopy}\n\nUser feedback: ${feedback}\n\nIMPORTANT: Apply the feedback to improve the ad copy. Keep what works, fix what the user asked to change.`,
+      ragContext: regenRag,
     });
 
     pending.headlines = aiRec.adCopy.nl.headlines;
@@ -1164,12 +1235,29 @@ async function confirmPendingAd(
       },
     }]);
 
+    // Store confirmed ad copy for future RAG retrieval (non-fatal)
+    const rec = session.recommendations!;
+    storeAdCopy({
+      brand: extractBrand(rec.campaignName),
+      eventType: "generic",
+      campaignType: "search",
+      language: "nl",
+      headlines: pending.headlines,
+      descriptions: pending.descriptions,
+      finalUrl: pending.finalUrl,
+      path1: pending.path1,
+      path2: pending.path2,
+      campaignName: rec.campaignName,
+      feedbackApplied: pending.feedbackHistory,
+    }).catch((err) => console.warn("[wizard] Ad memory store failed:", err));
+
     session.pendingAd = undefined;
     sessions.set(key, session);
 
     return reply(message, [
       `Ad created (PAUSED) with URL \`${pending.finalUrl}\``,
       `  ${pending.headlines.length} headlines · ${pending.descriptions.length} descriptions`,
+      "Saved to ad copy library for future reference.",
       "Review in Google Ads and enable when ready.",
     ].join("\n"));
   } catch (err) {
