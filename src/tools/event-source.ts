@@ -8,6 +8,7 @@ const DIRECTUS_TOKEN = process.env.WEBSITE_COLLAB_DIRECTUS_TOKEN ?? "";
 
 const EVENT_FIELDS = [
   "id", "type", "status", "url", "start_date", "expiration_date",
+  "location_text", "postal_code", "country",
   "event_translations.title", "event_translations.languages_id",
   "event_translations.date", "event_translations.slug",
   "brands.brand_id.id", "brands.brand_id.name",
@@ -31,6 +32,9 @@ export interface EventData {
   url: string | null;
   startDate: string | null;
   endDate: string | null;
+  locationText: string | null;
+  postalCode: string | null;
+  country: string | null;
   titleNl: string;
   titleFr: string;
   slugNl: string | null;
@@ -39,6 +43,10 @@ export interface EventData {
   dateTextFr: string | null;
   brands: string[];
   dates: EventDate[];
+  /** Derived: last event day from dates array */
+  lastEventDay: string | null;
+  /** Derived: suggested campaign end date (day before last event day) */
+  suggestedCampaignEnd: string | null;
 }
 
 /** Strip accents for fuzzy matching: "Méro" → "Mero" */
@@ -74,6 +82,28 @@ function parseEvent(e: Record<string, any>): EventData {
     if (name) brandNames.push(String(name));
   }
 
+  const parsedDates = ((e.dates ?? []) as Array<Record<string, any>>)
+    .map((d) => ({
+      date: String(d.date ?? ""),
+      startTime: String(d.start_time ?? ""),
+      endTime: String(d.end_time ?? ""),
+      capacity: Number(d.capacity ?? 0),
+      capacityUsed: Number(d.capacity_used ?? 0),
+      type: String(d.type ?? "free"),
+    }))
+    .sort((a, b) => a.date.localeCompare(b.date));
+
+  // Derive last event day and suggested campaign end
+  const uniqueDays = [...new Set(parsedDates.map((d) => d.date))].sort();
+  const lastEventDay = uniqueDays.length > 0 ? uniqueDays[uniqueDays.length - 1] : null;
+
+  let suggestedCampaignEnd: string | null = null;
+  if (lastEventDay) {
+    const d = new Date(lastEventDay);
+    d.setDate(d.getDate() - 1);
+    suggestedCampaignEnd = d.toISOString().split("T")[0];
+  }
+
   return {
     id: String(e.id),
     type: e.type ?? "online",
@@ -81,6 +111,9 @@ function parseEvent(e: Record<string, any>): EventData {
     url: e.url ?? null,
     startDate: e.start_date ?? null,
     endDate: e.expiration_date ?? null,
+    locationText: e.location_text ?? null,
+    postalCode: e.postal_code ?? null,
+    country: e.country ?? null,
     titleNl: nl.title ?? "",
     titleFr: fr.title ?? "",
     slugNl: nl.slug ?? null,
@@ -88,15 +121,9 @@ function parseEvent(e: Record<string, any>): EventData {
     dateTextNl: nl.date ?? null,
     dateTextFr: fr.date ?? null,
     brands: brandNames,
-    dates: ((e.dates ?? []) as Array<Record<string, any>>)
-      .map((d) => ({
-        date: String(d.date ?? ""),
-        startTime: String(d.start_time ?? ""),
-        endTime: String(d.end_time ?? ""),
-        capacity: Number(d.capacity ?? 0),
-        capacityUsed: Number(d.capacity_used ?? 0),
-        type: String(d.type ?? "free"),
-      }))
+    dates: parsedDates,
+    lastEventDay,
+    suggestedCampaignEnd,
       .sort((a, b) => a.date.localeCompare(b.date)),
   };
 }
@@ -274,13 +301,19 @@ export function eventToAiContext(event: EventData): string {
     hoursStr = `${earliest}-${latest}`;
   }
 
+  const locationStr = event.locationText
+    ? `physical sale event at ${event.locationText}`
+    : event.type === "physical" ? "physical sale event" : "online sale";
+
   const lines = [
     `Event: "${event.titleNl}"`,
-    `Type: ${event.type === "physical" ? "physical sale event in Aalter" : "online sale"}`,
+    `Type: ${locationStr}`,
     `Brands: ${event.brands.join(", ") || event.titleNl}`,
     `Dates: ${dateStr}${hoursStr ? ` (${hoursStr})` : ""}`,
-    `Landing page: ${event.url ?? "https://www.shoppingeventvip.be"}`,
-  ];
+    event.postalCode ? `Location: ${event.locationText} (${event.postalCode})` : null,
+    `Landing page: ${event.url ?? `https://www.shoppingeventvip.be/nl/event/${event.slugNl ?? event.titleNl.toLowerCase().replace(/\s+/g, "-")}`}`,
+    event.suggestedCampaignEnd ? `Campaign should end: ${event.suggestedCampaignEnd} (day before last event day)` : null,
+  ].filter(Boolean) as string[];
 
   if (event.dateTextFr) {
     lines.push(`Dates (FR): ${event.dateTextFr}`);

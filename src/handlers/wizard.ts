@@ -38,6 +38,7 @@ import { searchBrandContext, searchEventContext } from "../tools/brand-knowledge
 import {
   wizardStartBlocks,
   eventListBlocks,
+  eventConfirmationBlocks,
   sourceCampaignBlocks,
   recommendationBlocks,
   confirmationBlocks,
@@ -46,12 +47,13 @@ import {
   errorBlock,
   thinkingBlocks,
 } from "../tools/wizard-blocks.js";
+import type { EventData } from "../tools/event-source.js";
 
 /** Wizard response: either text-based (for OpenClaw) or direct-posted (Block Kit) */
 type WizardResponse = AgentResponse | DirectPostResponse;
 
 /** Wizard states */
-type WizardStep = "awaiting_type" | "awaiting_context" | "analyzing" | "reviewing" | "confirmed" | "created";
+type WizardStep = "awaiting_type" | "awaiting_event" | "confirming_event" | "awaiting_context" | "analyzing" | "reviewing" | "confirmed" | "created";
 
 interface CreatedCampaign {
   campaignResourceName: string;
@@ -68,6 +70,14 @@ interface PendingAd {
   feedbackHistory: string[];
 }
 
+interface EventConfig {
+  event: import("../tools/event-source.js").EventData;
+  campaignEndDate: string;
+  targetingRadius: number;
+  targetingLocation: string;
+  landingPageUrl: string;
+}
+
 interface WizardState {
   step: WizardStep;
   threadTs: string;
@@ -76,6 +86,7 @@ interface WizardState {
   campaignType?: GoogleCampaignType;
   sourceStructure?: CampaignStructure;
   recommendations?: WizardRecommendations;
+  eventConfig?: EventConfig;
   created?: CreatedCampaign;
   pendingAd?: PendingAd;
   createdAt: number;
@@ -191,6 +202,10 @@ export async function handleWizard(
   switch (existing.step) {
     case "awaiting_type":
       return handleTypeSelection(agent, message, existing, key);
+    case "awaiting_event":
+      return handleEventStep(agent, message, existing, key);
+    case "confirming_event":
+      return handleEventConfirmation(agent, message, existing, key);
     case "awaiting_context":
       return handleContext(agent, message, existing, key);
     case "reviewing":
@@ -300,6 +315,24 @@ async function handleTypeSelection(
   }
 
   session.campaignType = selectedType;
+
+  // Go to event selection if event source is configured
+  if (isEventSourceConfigured()) {
+    session.step = "awaiting_event";
+    sessions.set(key, session);
+
+    try {
+      const events = await getActiveEvents();
+      if (events.length > 0) {
+        return postBlocksOrText(
+          message,
+          eventListBlocks(events),
+          `*${selectedType}* campaign — select an event, paste an admin URL, or type \`skip\` for a custom campaign:`,
+        );
+      }
+    } catch { /* fall through to context */ }
+  }
+
   session.step = "awaiting_context";
   sessions.set(key, session);
 
@@ -307,6 +340,179 @@ async function handleTypeSelection(
     message,
     contextPromptBlocks(selectedType),
     `Got it — *${selectedType}* campaign. Tell me about the campaign: brand/product, landing page, and goal.`,
+  );
+}
+
+/** Handle event selection step — user picks or searches for an event */
+async function handleEventStep(
+  agent: GoogleAdsAgent,
+  message: RoutedMessage,
+  session: WizardState,
+  key: string,
+): Promise<WizardResponse> {
+  const lower = message.text.trim().toLowerCase();
+
+  // Skip event selection → go to free-form context
+  if (lower === "skip" || lower === "no event" || lower === "custom") {
+    session.step = "awaiting_context";
+    sessions.set(key, session);
+    return postBlocksOrText(
+      message,
+      contextPromptBlocks(session.campaignType ?? "search"),
+      "OK, describe the campaign: brand/product, landing page, and goal.",
+    );
+  }
+
+  // Browse events
+  if (lower === "events" || lower === "browse events") {
+    const events = await getActiveEvents();
+    return postBlocksOrText(message, eventListBlocks(events), `Active Events (${events.length})`);
+  }
+
+  // Event selected by button (event_select:ID) or by name
+  let event: EventData | null = null;
+
+  if (lower.startsWith("event_select:")) {
+    const eventId = message.text.trim().replace(/^event_select:/i, "").trim();
+    event = await getEventById(eventId);
+  } else {
+    // Try admin URL
+    const adminEventId = extractEventIdFromUrl(message.text.trim());
+    if (adminEventId) {
+      event = await getEventById(adminEventId);
+    } else {
+      // Try by name
+      event = await findEvent(message.text.trim());
+    }
+  }
+
+  if (!event) {
+    return reply(message, `Event not found. Try \`events\` to browse, paste an admin URL, or type \`skip\` for a custom campaign.`);
+  }
+
+  // Build event config with defaults
+  const landingPageUrl = event.url
+    ?? `https://www.shoppingeventvip.be/nl/event/${event.slugNl ?? event.titleNl.toLowerCase().replace(/\s+/g, "-")}`;
+
+  const eventConfig: EventConfig = {
+    event,
+    campaignEndDate: event.suggestedCampaignEnd ?? event.endDate?.split("T")[0] ?? "",
+    targetingRadius: event.type === "physical" ? 30 : 0,
+    targetingLocation: event.postalCode
+      ? `${event.locationText ?? event.postalCode} (${event.postalCode})`
+      : "Belgium",
+    landingPageUrl,
+  };
+
+  session.eventConfig = eventConfig;
+  session.step = "confirming_event";
+  sessions.set(key, session);
+
+  return postBlocksOrText(
+    message,
+    eventConfirmationBlocks({
+      event,
+      campaignEndDate: eventConfig.campaignEndDate,
+      targetingRadius: eventConfig.targetingRadius,
+      targetingLocation: eventConfig.targetingLocation,
+      landingPageUrl: eventConfig.landingPageUrl,
+    }),
+    `Event: ${event.titleNl}`,
+  );
+}
+
+/** Handle event confirmation — user confirms or adjusts settings */
+async function handleEventConfirmation(
+  agent: GoogleAdsAgent,
+  message: RoutedMessage,
+  session: WizardState,
+  key: string,
+): Promise<WizardResponse> {
+  const lower = message.text.trim().toLowerCase();
+  const ec = session.eventConfig!;
+
+  // Confirm → generate recommendations
+  if (lower === "confirm" || lower === "confirm_event" || lower === "yes" || lower === "go") {
+    if (isSlackConfigured()) {
+      await slackPost(message.channel_id, {
+        text: "Generating recommendations...",
+        blocks: thinkingBlocks("Generating campaign recommendations from event data"),
+        thread_ts: message.thread_ts ?? message.ts,
+      });
+    }
+
+    session.step = "analyzing";
+    sessions.set(key, session);
+
+    const brand = ec.event.brands[0] ?? ec.event.titleNl;
+    const ragContext = await gatherRagContext(brand, ec.event.type, session.campaignType ?? "search");
+
+    const recommendations = await generateRecommendations({
+      source: session.sourceStructure,
+      campaignType: session.campaignType ?? "search",
+      brandOrProduct: eventToAiContext(ec.event),
+      ragContext,
+    });
+
+    // Apply event config
+    recommendations.finalUrl = ec.landingPageUrl;
+    recommendations.endDate = ec.campaignEndDate;
+
+    session.recommendations = recommendations;
+    session.step = "reviewing";
+    sessions.set(key, session);
+
+    // If cloning, show source campaign info first
+    if (session.sourceStructure && isSlackConfigured()) {
+      await postBlocks(message, sourceCampaignBlocks(session.sourceStructure), `Source: ${session.sourceStructure.name}`);
+    }
+
+    return postBlocksOrText(message, recommendationBlocks(recommendations), recommendations.campaignName);
+  }
+
+  // Change radius
+  const radiusMatch = lower.match(/radius\s+(\d+)\s*km?/);
+  if (radiusMatch) {
+    ec.targetingRadius = Number(radiusMatch[1]);
+    sessions.set(key, session);
+    return reply(message, `Targeting radius set to ${ec.targetingRadius}km. Type \`confirm\` to generate.`);
+  }
+
+  // Change end date
+  const endMatch = message.text.trim().match(/end\s*date\s+(\d{4}-\d{2}-\d{2})/i);
+  if (endMatch) {
+    ec.campaignEndDate = endMatch[1];
+    sessions.set(key, session);
+    return reply(message, `Campaign end date set to ${ec.campaignEndDate}. Type \`confirm\` to generate.`);
+  }
+
+  // Change URL
+  const urlInMsg = message.text.match(/(https?:\/\/[^\s>|]+)/i);
+  if (urlInMsg && !lower.startsWith("confirm")) {
+    ec.landingPageUrl = urlInMsg[1];
+    sessions.set(key, session);
+    return reply(message, `Landing page set to \`${ec.landingPageUrl}\`. Type \`confirm\` to generate.`);
+  }
+
+  // Change location
+  const locMatch = lower.match(/location\s+(.+)/);
+  if (locMatch) {
+    ec.targetingLocation = locMatch[1].trim();
+    sessions.set(key, session);
+    return reply(message, `Targeting location set to "${ec.targetingLocation}". Type \`confirm\` to generate.`);
+  }
+
+  // Show current config
+  return postBlocksOrText(
+    message,
+    eventConfirmationBlocks({
+      event: ec.event,
+      campaignEndDate: ec.campaignEndDate,
+      targetingRadius: ec.targetingRadius,
+      targetingLocation: ec.targetingLocation,
+      landingPageUrl: ec.landingPageUrl,
+    }),
+    `Event: ${ec.event.titleNl}`,
   );
 }
 
@@ -362,7 +568,7 @@ async function handleEventSelection(
   }
 }
 
-/** Handle clone — analyze source campaign, auto-match event, generate recommendations */
+/** Handle clone — analyze source campaign, then go to event selection */
 async function handleClone(
   agent: GoogleAdsAgent,
   message: RoutedMessage,
@@ -377,7 +583,7 @@ async function handleClone(
   if (isSlackConfigured()) {
     await slackPost(message.channel_id, {
       text: "Analyzing campaign...",
-      blocks: thinkingBlocks("Analyzing source campaign and matching events"),
+      blocks: thinkingBlocks("Analyzing source campaign"),
       thread_ts: message.thread_ts ?? message.ts,
     });
   }
@@ -399,28 +605,64 @@ async function handleClone(
   session.sourceStructure = structure;
   session.campaignType = mapChannelType(structure.type);
 
-  // Auto-match event
-  let eventContext: string | undefined;
-  let eventInfo: { title: string; dates: string; type: string; url?: string } | undefined;
-  let matchedEventUrl: string | null = null;
-  let matchedEventEndDate: string | null = null;
+  // Show source summary
+  if (isSlackConfigured()) {
+    await postBlocks(message, sourceCampaignBlocks(structure), `Source: ${structure.name}`);
+  }
 
+  // Try to auto-match an event for the brand
   if (isEventSourceConfigured()) {
     try {
       const matchedEvent = await findEventForBrand(structure.name);
       if (matchedEvent) {
-        eventContext = eventToAiContext(matchedEvent);
-        matchedEventUrl = matchedEvent.url;
-        matchedEventEndDate = matchedEvent.endDate ? matchedEvent.endDate.split("T")[0] : null;
-        eventInfo = {
-          title: matchedEvent.titleNl,
-          dates: matchedEvent.dateTextNl ?? matchedEvent.startDate?.split("T")[0] ?? "?",
-          type: matchedEvent.type,
-          url: matchedEvent.url ?? undefined,
+        // Auto-fill event config and show confirmation
+        const landingPageUrl = matchedEvent.url
+          ?? `https://www.shoppingeventvip.be/nl/event/${matchedEvent.slugNl ?? matchedEvent.titleNl.toLowerCase().replace(/\s+/g, "-")}`;
+
+        session.eventConfig = {
+          event: matchedEvent,
+          campaignEndDate: matchedEvent.suggestedCampaignEnd ?? matchedEvent.endDate?.split("T")[0] ?? "",
+          targetingRadius: matchedEvent.type === "physical" ? 30 : 0,
+          targetingLocation: matchedEvent.postalCode
+            ? `${matchedEvent.locationText ?? matchedEvent.postalCode} (${matchedEvent.postalCode})`
+            : "Belgium",
+          landingPageUrl,
         };
+        session.step = "confirming_event";
+        sessions.set(key, session);
+
+        return postBlocksOrText(
+          message,
+          eventConfirmationBlocks({
+            event: matchedEvent,
+            campaignEndDate: session.eventConfig.campaignEndDate,
+            targetingRadius: session.eventConfig.targetingRadius,
+            targetingLocation: session.eventConfig.targetingLocation,
+            landingPageUrl: session.eventConfig.landingPageUrl,
+          }),
+          `Matched event: ${matchedEvent.titleNl}`,
+        );
       }
-    } catch { /* non-critical */ }
+    } catch { /* fall through */ }
+
+    // No auto-match — show event list
+    try {
+      const events = await getActiveEvents();
+      if (events.length > 0) {
+        session.step = "awaiting_event";
+        sessions.set(key, session);
+        return postBlocksOrText(
+          message,
+          eventListBlocks(events),
+          `Source analyzed. Now select the event this campaign is for, or type \`skip\` to continue without event:`,
+        );
+      }
+    } catch { /* fall through */ }
   }
+
+  // No event source — go directly to AI generation
+  session.step = "analyzing";
+  sessions.set(key, session);
 
   const cloneBrand = extractBrand(structure.name);
   const cloneRag = await gatherRagContext(cloneBrand, "generic", structure.type);
@@ -428,27 +670,14 @@ async function handleClone(
   const recommendations = await generateRecommendations({
     source: structure,
     campaignType: structure.type,
-    brandOrProduct: eventContext,
     ragContext: cloneRag,
   });
-
-  if (matchedEventUrl) recommendations.finalUrl = matchedEventUrl;
-  if (matchedEventEndDate) recommendations.endDate = matchedEventEndDate;
 
   session.recommendations = recommendations;
   session.step = "reviewing";
   sessions.set(key, session);
 
-  // Post source summary + recommendations as blocks
-  if (isSlackConfigured()) {
-    // Post source campaign info first
-    await postBlocks(message, sourceCampaignBlocks(structure, eventInfo), `Source: ${structure.name}`);
-    // Then post the recommendation with action buttons
-    return postBlocks(message, recommendationBlocks(recommendations), recommendations.campaignName);
-  }
-
-  // Text fallback
-  return reply(message, `Source: ${structure.name}\n---\n${recommendations.campaignName}`);
+  return postBlocksOrText(message, recommendationBlocks(recommendations), recommendations.campaignName);
 }
 
 /** Step 2b: Handle user context for fresh campaign creation */

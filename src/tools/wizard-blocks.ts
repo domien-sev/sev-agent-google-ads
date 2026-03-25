@@ -112,6 +112,49 @@ export function eventListBlocks(events: EventData[]): SlackBlock[] {
   return blocks;
 }
 
+// --- Step 2.5: Event Confirmation ---
+
+export function eventConfirmationBlocks(opts: {
+  event: EventData;
+  campaignEndDate: string;
+  targetingRadius: number;
+  targetingLocation: string;
+  landingPageUrl: string;
+}): SlackBlock[] {
+  const { event, campaignEndDate, targetingRadius, targetingLocation, landingPageUrl } = opts;
+
+  const blocks: SlackBlock[] = [
+    headerBlock(`Event: ${event.titleNl}`),
+    sectionFields([
+      `*Type:*\n${event.type === "physical" ? ":round_pushpin: Physical" : ":globe_with_meridians: Online"}`,
+      `*Brands:*\n${event.brands.join(", ") || "—"}`,
+      `*Event Dates:*\n${event.dateTextNl ?? "—"}`,
+      `*Location:*\n${event.locationText ?? "—"}`,
+      `*Postal Code:*\n${event.postalCode ?? "—"}`,
+      `*Country:*\n${event.country ?? "—"}`,
+    ]),
+    dividerBlock(),
+    headerBlock("Campaign Settings"),
+    sectionFields([
+      `*Campaign End Date:*\n${campaignEndDate}`,
+      `*Ad Targeting:*\n${targetingRadius}km radius around ${targetingLocation}`,
+      `*Landing Page:*\n${landingPageUrl}`,
+    ]),
+    dividerBlock(),
+    actionsBlock([
+      buttonElement("Confirm & Generate", "wizard_confirm_event", "confirm_event", "primary"),
+      buttonElement("Change Radius", "wizard_change_radius", "change_radius"),
+      buttonElement("Change End Date", "wizard_change_end", "change_end"),
+      buttonElement("Cancel", "wizard_cancel", "cancel", "danger"),
+    ], "wizard_event_confirm_actions"),
+    contextBlock([
+      "Modify: `radius 50km` · `end date YYYY-MM-DD` · `url https://...` · or type `confirm` to generate ad copy",
+    ]),
+  ];
+
+  return blocks;
+}
+
 // --- Step 3: Source Campaign Summary ---
 
 export function sourceCampaignBlocks(
