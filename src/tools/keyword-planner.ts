@@ -113,7 +113,7 @@ export async function addNegativeKeywords(
         negative: true,
         keyword: {
           text: kw,
-          matchType: "PHRASE",
+          match_type: "PHRASE",
         },
       },
     }));
@@ -127,11 +127,11 @@ export async function addNegativeKeywords(
 
   const ops = keywords.map((kw) => ({
     create: {
-      adGroup: adGroupResourceName,
+      ad_group: adGroupResourceName,
       negative: true,
       keyword: {
         text: kw,
-        matchType: "PHRASE",
+        match_type: "PHRASE",
       },
     },
   }));

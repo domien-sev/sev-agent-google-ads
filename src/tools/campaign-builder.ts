@@ -1,6 +1,9 @@
 /**
  * Typed campaign builder for all 5 Google Ads campaign types.
  * Uses the GoogleAdsClient from @domien-sev/ads-sdk for mutations.
+ *
+ * IMPORTANT: The Google Ads REST API requires snake_case field names.
+ * All mutation payloads must use snake_case (e.g. campaign_budget, not campaignBudget).
  */
 import type { GoogleAdsClient } from "@domien-sev/ads-sdk";
 import type { CampaignConfig, GoogleCampaignType } from "../types.js";
@@ -39,7 +42,7 @@ export async function buildCampaign(
   }
 }
 
-/** Map our campaign type to Google's advertisingChannelType */
+/** Map our campaign type to Google's advertising_channel_type */
 function channelType(type: GoogleCampaignType): string {
   const map: Record<GoogleCampaignType, string> = {
     search: "SEARCH",
@@ -54,20 +57,20 @@ function channelType(type: GoogleCampaignType): string {
 /** Map campaign type to a sensible default bidding strategy */
 function biddingStrategy(config: CampaignConfig): Record<string, unknown> {
   if (config.targetRoas) {
-    return { targetRoas: { targetRoas: config.targetRoas } };
+    return { target_roas: { target_roas: config.targetRoas } };
   }
   if (config.targetCpa) {
-    return { targetCpa: { targetCpaMicros: String(Math.round(config.targetCpa * 1_000_000)) } };
+    return { target_cpa: { target_cpa_micros: String(Math.round(config.targetCpa * 1_000_000)) } };
   }
-  return { maximizeConversions: {} };
+  return { maximize_conversions: {} };
 }
 
 async function createBudget(client: GoogleAdsClient, name: string, amountMicros: number): Promise<string> {
   const result = await client.mutateResource("campaignBudgets", [{
     create: {
       name: `${name} Budget`,
-      amountMicros: String(amountMicros),
-      deliveryMethod: "STANDARD",
+      amount_micros: String(amountMicros),
+      delivery_method: "STANDARD",
     },
   }]);
   return result.results[0].resourceName;
@@ -82,15 +85,15 @@ async function createBaseCampaign(
   const result = await client.mutateResource("campaigns", [{
     create: {
       name: config.name,
-      advertisingChannelType: channelType(config.type),
+      advertising_channel_type: channelType(config.type),
       status: "PAUSED",
-      campaignBudget: budgetResourceName,
-      startDate: config.startDate.replace(/-/g, ""),
-      ...(config.endDate && { endDate: config.endDate.replace(/-/g, "") }),
+      campaign_budget: budgetResourceName,
+      start_date: config.startDate.replace(/-/g, ""),
+      ...(config.endDate && { end_date: config.endDate.replace(/-/g, "") }),
       ...biddingStrategy(config),
-      geoTargetTypeSetting: {
-        positiveGeoTargetType: "PRESENCE_OR_INTEREST",
-        negativeGeoTargetType: "PRESENCE_OR_INTEREST",
+      geo_target_type_setting: {
+        positive_geo_target_type: "PRESENCE_OR_INTEREST",
+        negative_geo_target_type: "PRESENCE_OR_INTEREST",
       },
       ...extraFields,
     },
@@ -101,10 +104,10 @@ async function createBaseCampaign(
 async function buildSearchCampaign(client: GoogleAdsClient, config: CampaignConfig): Promise<BuildResult> {
   const budgetRn = await createBudget(client, config.name, config.dailyBudgetMicros);
   const campaignRn = await createBaseCampaign(client, config, budgetRn, {
-    networkSettings: {
-      targetGoogleSearch: true,
-      targetSearchNetwork: false,
-      targetContentNetwork: false,
+    network_settings: {
+      target_google_search: true,
+      target_search_network: false,
+      target_content_network: false,
     },
   });
 
@@ -123,11 +126,11 @@ async function buildSearchCampaign(client: GoogleAdsClient, config: CampaignConf
   if (config.keywords?.length) {
     const keywordOps = config.keywords.map((kw) => ({
       create: {
-        adGroup: adGroupRn,
+        ad_group: adGroupRn,
         status: "ENABLED",
         keyword: {
           text: kw.text,
-          matchType: kw.matchType,
+          match_type: kw.matchType,
         },
       },
     }));
@@ -139,16 +142,16 @@ async function buildSearchCampaign(client: GoogleAdsClient, config: CampaignConf
     const rsa = config.responsiveSearchAd;
     await client.mutateResource("adGroupAds", [{
       create: {
-        adGroup: adGroupRn,
+        ad_group: adGroupRn,
         status: "PAUSED",
         ad: {
-          responsiveSearchAd: {
+          responsive_search_ad: {
             headlines: rsa.headlines.map((h) => ({ text: h })),
             descriptions: rsa.descriptions.map((d) => ({ text: d })),
             path1: rsa.path1,
             path2: rsa.path2,
           },
-          finalUrls: [rsa.finalUrl],
+          final_urls: [rsa.finalUrl],
         },
       },
     }]);
@@ -160,10 +163,10 @@ async function buildSearchCampaign(client: GoogleAdsClient, config: CampaignConf
 async function buildShoppingCampaign(client: GoogleAdsClient, config: CampaignConfig): Promise<BuildResult> {
   const budgetRn = await createBudget(client, config.name, config.dailyBudgetMicros);
   const campaignRn = await createBaseCampaign(client, config, budgetRn, {
-    shoppingSetting: {
-      merchantId: config.merchantId ? String(config.merchantId) : undefined,
-      feedLabel: config.feedLabel,
-      salesCountry: config.locations[0] ?? "BE",
+    shopping_setting: {
+      merchant_id: config.merchantId ? String(config.merchantId) : undefined,
+      feed_label: config.feedLabel,
+      sales_country: config.locations[0] ?? "BE",
     },
   });
 
@@ -196,7 +199,7 @@ async function buildPMaxCampaign(client: GoogleAdsClient, config: CampaignConfig
         name: ag.name,
         campaign: campaignRn,
         status: "ENABLED",
-        finalUrls: ag.finalUrls,
+        final_urls: ag.finalUrls,
       },
     }]);
     assetGroupRn = assetGroupResult.results[0].resourceName;
@@ -204,10 +207,10 @@ async function buildPMaxCampaign(client: GoogleAdsClient, config: CampaignConfig
     // Create text assets for headlines and descriptions
     const textAssetOps = [
       ...ag.headlines.map((h) => ({
-        create: { name: `${ag.name} headline`, type: "TEXT", textAsset: { text: h } },
+        create: { name: `${ag.name} headline`, type: "TEXT", text_asset: { text: h } },
       })),
       ...ag.descriptions.map((d) => ({
-        create: { name: `${ag.name} desc`, type: "TEXT", textAsset: { text: d } },
+        create: { name: `${ag.name} desc`, type: "TEXT", text_asset: { text: d } },
       })),
     ];
 
@@ -222,11 +225,11 @@ async function buildPMaxCampaign(client: GoogleAdsClient, config: CampaignConfig
 async function buildDisplayCampaign(client: GoogleAdsClient, config: CampaignConfig): Promise<BuildResult> {
   const budgetRn = await createBudget(client, config.name, config.dailyBudgetMicros);
   const campaignRn = await createBaseCampaign(client, config, budgetRn, {
-    advertisingChannelSubType: "DISPLAY_STANDARD",
-    networkSettings: {
-      targetGoogleSearch: false,
-      targetSearchNetwork: false,
-      targetContentNetwork: true,
+    advertising_channel_sub_type: "DISPLAY_STANDARD",
+    network_settings: {
+      target_google_search: false,
+      target_search_network: false,
+      target_content_network: true,
     },
   });
 
@@ -248,7 +251,7 @@ async function buildDisplayCampaign(client: GoogleAdsClient, config: CampaignCon
 async function buildYouTubeCampaign(client: GoogleAdsClient, config: CampaignConfig): Promise<BuildResult> {
   const budgetRn = await createBudget(client, config.name, config.dailyBudgetMicros);
   const campaignRn = await createBaseCampaign(client, config, budgetRn, {
-    advertisingChannelSubType: "VIDEO_ACTION",
+    advertising_channel_sub_type: "VIDEO_ACTION",
   });
 
   const adGroupResult = await client.mutateResource("adGroups", [{

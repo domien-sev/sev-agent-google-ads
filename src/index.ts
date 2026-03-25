@@ -93,6 +93,12 @@ async function main() {
           text = `clone ${action.value}`;
         } else if (aid === "wizard_cancel") {
           text = "cancel";
+        } else if (aid === "wizard_enable") {
+          text = "enable";
+        } else if (aid === "wizard_done") {
+          text = "done";
+        } else if (aid === "wizard_update_budget") {
+          text = "adjust budget to";
         }
 
         // Build synthetic message and route to handler

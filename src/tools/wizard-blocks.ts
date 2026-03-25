@@ -272,8 +272,13 @@ export function confirmationBlocks(opts: {
 
   blocks.push(
     dividerBlock(),
+    actionsBlock([
+      buttonElement("Enable", "wizard_enable", "enable", "primary"),
+      buttonElement("Update Budget", "wizard_update_budget", "adjust budget to"),
+      buttonElement("Done", "wizard_done", "done"),
+    ], "wizard_post_actions"),
     contextBlock([
-      ":warning: Campaign is PAUSED. Review in Google Ads and enable when ready.",
+      ":warning: Campaign is PAUSED. Use buttons above or type: `enable` · `pause` · `adjust budget to €X` · `end date YYYY-MM-DD` · `rename to ...` · `done`",
     ]),
   );
 

@@ -47,7 +47,13 @@ import {
 type WizardResponse = AgentResponse | DirectPostResponse;
 
 /** Wizard states */
-type WizardStep = "awaiting_type" | "awaiting_context" | "analyzing" | "reviewing" | "confirmed";
+type WizardStep = "awaiting_type" | "awaiting_context" | "analyzing" | "reviewing" | "confirmed" | "created";
+
+interface CreatedCampaign {
+  campaignResourceName: string;
+  adGroupResourceName?: string;
+  assetGroupResourceName?: string;
+}
 
 interface WizardState {
   step: WizardStep;
@@ -57,6 +63,7 @@ interface WizardState {
   campaignType?: GoogleCampaignType;
   sourceStructure?: CampaignStructure;
   recommendations?: WizardRecommendations;
+  created?: CreatedCampaign;
   createdAt: number;
 }
 
@@ -141,6 +148,8 @@ export async function handleWizard(
       return handleContext(agent, message, existing, key);
     case "reviewing":
       return handleReview(agent, message, existing, key);
+    case "created":
+      return handlePostCreation(agent, message, existing, key);
     default:
       return reply(message, "Wizard is in an unexpected state. Type `cancel` to start over.");
   }
@@ -618,7 +627,15 @@ async function confirmAndBuild(
 
   try {
     const result = await buildCampaign(agent.googleAds, config);
-    sessions.delete(key);
+
+    // Keep session alive for post-creation commands
+    session.step = "created";
+    session.created = {
+      campaignResourceName: result.campaignResourceName,
+      adGroupResourceName: result.adGroupResourceName,
+      assetGroupResourceName: result.assetGroupResourceName,
+    };
+    sessions.set(key, session);
 
     return postBlocksOrText(
       message,
@@ -644,6 +661,142 @@ async function confirmAndBuild(
       `Error: ${errMsg}`,
     );
   }
+}
+
+/** Post-creation: modify the live campaign */
+async function handlePostCreation(
+  agent: GoogleAdsAgent,
+  message: RoutedMessage,
+  session: WizardState,
+  key: string,
+): Promise<WizardResponse> {
+  const lower = message.text.trim().toLowerCase();
+  const created = session.created!;
+  const rec = session.recommendations!;
+
+  // Done — close session
+  if (lower === "done" || lower === "finish" || lower === "close") {
+    sessions.delete(key);
+    return reply(message, `Session closed. Campaign "${rec.campaignName}" is live in Google Ads (PAUSED).`);
+  }
+
+  // Enable campaign
+  if (lower === "enable" || lower === "activate" || lower === "start") {
+    try {
+      await agent.googleAds.mutateResource("campaigns", [{
+        update: { resourceName: created.campaignResourceName, status: "ENABLED" },
+        updateMask: "status",
+      }]);
+      return reply(message, `Campaign "${rec.campaignName}" is now *ENABLED*. It will start serving ads.`);
+    } catch (err) {
+      return reply(message, `Failed to enable: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
+  // Pause campaign
+  if (lower === "pause" || lower === "stop") {
+    try {
+      await agent.googleAds.mutateResource("campaigns", [{
+        update: { resourceName: created.campaignResourceName, status: "PAUSED" },
+        updateMask: "status",
+      }]);
+      return reply(message, `Campaign "${rec.campaignName}" is now *PAUSED*.`);
+    } catch (err) {
+      return reply(message, `Failed to pause: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
+  // Update budget
+  const budgetMatch = lower.match(/(?:adjust|change|set|update)\s+budget\s+(?:to\s+)?€?(\d+)/);
+  if (budgetMatch) {
+    const newBudgetMicros = Math.round(Number(budgetMatch[1]) * 1_000_000);
+    try {
+      // Get budget resource name from campaign
+      const campaignData = await agent.googleAds.query(`
+        SELECT campaign.campaign_budget FROM campaign
+        WHERE campaign.resource_name = '${created.campaignResourceName}'
+      `) as Array<{ results?: Array<Record<string, any>> }>;
+
+      let budgetRn: string | null = null;
+      for (const batch of campaignData) {
+        for (const row of batch.results ?? []) {
+          budgetRn = row.campaign?.campaignBudget ?? null;
+        }
+      }
+
+      if (!budgetRn) {
+        return reply(message, "Could not find the campaign's budget resource.");
+      }
+
+      await agent.googleAds.mutateResource("campaignBudgets", [{
+        update: { resourceName: budgetRn, amount_micros: String(newBudgetMicros) },
+        updateMask: "amount_micros",
+      }]);
+      return reply(message, `Budget updated to *€${budgetMatch[1]}/day*.`);
+    } catch (err) {
+      return reply(message, `Failed to update budget: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
+  // Update end date
+  const endDateMatch = message.text.trim().match(/(?:end\s*date|stop\s*date|einddatum)\s+(?:to\s+)?(\d{4}-\d{2}-\d{2})/i);
+  if (endDateMatch) {
+    try {
+      await agent.googleAds.mutateResource("campaigns", [{
+        update: {
+          resourceName: created.campaignResourceName,
+          end_date: endDateMatch[1].replace(/-/g, ""),
+        },
+        updateMask: "end_date",
+      }]);
+      return reply(message, `End date updated to *${endDateMatch[1]}*.`);
+    } catch (err) {
+      return reply(message, `Failed to update end date: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
+  // Remove end date
+  if (lower === "no end date" || lower === "remove end date" || lower === "clear end date") {
+    try {
+      await agent.googleAds.mutateResource("campaigns", [{
+        update: {
+          resourceName: created.campaignResourceName,
+          end_date: "20371231",
+        },
+        updateMask: "end_date",
+      }]);
+      return reply(message, "End date removed (campaign will run indefinitely).");
+    } catch (err) {
+      return reply(message, `Failed to clear end date: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
+  // Rename campaign
+  const nameMatch = message.text.trim().match(/(?:rename|name|set name)\s+(?:to\s+)?["']?(.+?)["']?\s*$/i);
+  if (nameMatch) {
+    try {
+      await agent.googleAds.mutateResource("campaigns", [{
+        update: { resourceName: created.campaignResourceName, name: nameMatch[1] },
+        updateMask: "name",
+      }]);
+      rec.campaignName = nameMatch[1];
+      sessions.set(key, session);
+      return reply(message, `Campaign renamed to *"${nameMatch[1]}"*.`);
+    } catch (err) {
+      return reply(message, `Failed to rename: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
+  // Unknown command — show help
+  return reply(message, [
+    `Campaign *"${rec.campaignName}"* is created (PAUSED). You can:`,
+    "  `enable` — Start serving ads",
+    "  `pause` — Pause the campaign",
+    "  `adjust budget to €X` — Change daily budget",
+    "  `end date YYYY-MM-DD` · `no end date` — Set/clear end date",
+    "  `rename to [name]` — Rename the campaign",
+    "  `done` — Close this session",
+  ].join("\n"));
 }
 
 /** Export as Google Ads Editor CSV */
