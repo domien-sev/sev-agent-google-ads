@@ -105,6 +105,7 @@ export function isWizardMessage(text: string, channelId: string, userId: string)
   const lower = text.trim().toLowerCase();
   if (lower === "wizard" || lower.startsWith("campaign wizard")) return true;
   if (lower.startsWith("clone ") || lower.startsWith("event ") || lower === "events") return true;
+  if (lower.startsWith("manage ")) return true;
   return getSession(channelId, userId) !== null;
 }
 
@@ -127,6 +128,9 @@ export async function handleWizard(
   const existing = getSession(message.channel_id, message.user_id);
 
   if (!existing) {
+    if (lower.startsWith("manage ")) {
+      return handleManage(agent, message, key);
+    }
     if (lower.startsWith("clone ") || lower.startsWith("event ") || lower === "events") {
       const session: WizardState = {
         step: "awaiting_type",
@@ -664,6 +668,140 @@ async function confirmAndBuild(
   }
 }
 
+/** Manage an existing campaign by name */
+async function handleManage(
+  agent: GoogleAdsAgent,
+  message: RoutedMessage,
+  key: string,
+): Promise<WizardResponse> {
+  const target = message.text.trim().replace(/^manage\s+/i, "").replace(/^["']|["']$/g, "").trim();
+  if (!target) {
+    return reply(message, "Usage: `manage [campaign name]`\nExample: `manage 260325_MarieMero_BE`");
+  }
+
+  // Find campaign
+  const campaignId = await findCampaignId(agent, target);
+  if (!campaignId) {
+    return reply(message, `Campaign "${target}" not found. Use the exact name or numeric ID.`);
+  }
+
+  // Fetch campaign details
+  const query = `
+    SELECT
+      campaign.resource_name, campaign.name, campaign.status,
+      campaign.advertising_channel_type,
+      campaign_budget.amount_micros,
+      metrics.impressions, metrics.clicks, metrics.cost_micros
+    FROM campaign
+    WHERE campaign.id = ${campaignId}
+  `;
+
+  let campaignName = target;
+  let campaignRn = "";
+  let campaignStatus = "UNKNOWN";
+  let campaignType = "UNKNOWN";
+  let budgetEuros = 0;
+  let impressions = 0;
+  let clicks = 0;
+  let cost = 0;
+
+  try {
+    const results = await agent.googleAds.query(query) as Array<{ results?: Array<Record<string, any>> }>;
+    for (const batch of results) {
+      for (const row of batch.results ?? []) {
+        campaignRn = row.campaign?.resourceName ?? "";
+        campaignName = row.campaign?.name ?? target;
+        campaignStatus = row.campaign?.status ?? "UNKNOWN";
+        campaignType = row.campaign?.advertisingChannelType ?? "UNKNOWN";
+        budgetEuros = Number(row.campaignBudget?.amountMicros ?? 0) / 1_000_000;
+        impressions = Number(row.metrics?.impressions ?? 0);
+        clicks = Number(row.metrics?.clicks ?? 0);
+        cost = Number(row.metrics?.costMicros ?? 0) / 1_000_000;
+      }
+    }
+  } catch (err) {
+    return reply(message, `Error fetching campaign: ${err instanceof Error ? err.message : String(err)}`);
+  }
+
+  if (!campaignRn) {
+    return reply(message, `Campaign "${target}" not found.`);
+  }
+
+  // Count ad groups and ads
+  let adGroupCount = 0;
+  let adCount = 0;
+  let firstAdGroupRn: string | undefined;
+  try {
+    const agQuery = `
+      SELECT ad_group.resource_name, ad_group.name
+      FROM ad_group
+      WHERE campaign.id = ${campaignId} AND ad_group.status != 'REMOVED'
+    `;
+    const agResults = await agent.googleAds.query(agQuery) as Array<{ results?: Array<Record<string, any>> }>;
+    for (const batch of agResults) {
+      for (const row of batch.results ?? []) {
+        adGroupCount++;
+        if (!firstAdGroupRn) firstAdGroupRn = row.adGroup?.resourceName;
+      }
+    }
+
+    const adQuery = `
+      SELECT ad_group_ad.ad.id
+      FROM ad_group_ad
+      WHERE campaign.id = ${campaignId} AND ad_group_ad.status != 'REMOVED'
+    `;
+    const adResults = await agent.googleAds.query(adQuery) as Array<{ results?: Array<Record<string, any>> }>;
+    for (const batch of adResults) {
+      adCount += (batch.results ?? []).length;
+    }
+  } catch { /* non-critical */ }
+
+  // Create session in "created" state
+  const session: WizardState = {
+    step: "created",
+    threadTs: message.thread_ts ?? message.ts,
+    channelId: message.channel_id,
+    userId: message.user_id,
+    createdAt: Date.now(),
+    recommendations: {
+      campaignName,
+      budget: { dailyEuros: budgetEuros, reasoning: "" },
+      adCopy: { nl: { headlines: [], descriptions: [] }, fr: { headlines: [], descriptions: [] } },
+      keywords: [],
+      targeting: { locations: [], reasoning: "" },
+      finalUrl: "",
+      path1: "",
+      path2: "",
+    },
+    created: {
+      campaignResourceName: campaignRn,
+      adGroupResourceName: firstAdGroupRn,
+    },
+  };
+  sessions.set(key, session);
+
+  const statusEmoji = campaignStatus === "ENABLED" ? ":large_green_circle:" : ":double_vertical_bar:";
+  const lines = [
+    `*Managing: ${campaignName}* ${statusEmoji}`,
+    "",
+    `*Status:* ${campaignStatus} · *Type:* ${campaignType}`,
+    `*Budget:* €${budgetEuros.toFixed(2)}/day · *Ad Groups:* ${adGroupCount} · *Ads:* ${adCount}`,
+    `*Performance:* ${impressions.toLocaleString()} impressions · ${clicks} clicks · €${cost.toFixed(2)} spent`,
+    "",
+    adCount === 0 ? ":warning: *No ads in this campaign.* Use `add ad https://your-url.com` to create one." : "",
+    "",
+    "Commands:",
+    "  `enable` / `pause` — Change campaign status",
+    "  `adjust budget to €X` — Update daily budget",
+    "  `end date YYYY-MM-DD` / `no end date` — Set/clear end date",
+    "  `rename to [name]` — Rename campaign",
+    "  `add ad https://url.com` — Create a responsive search ad",
+    "  `done` — Close this session",
+  ].filter(Boolean);
+
+  return reply(message, lines.join("\n"));
+}
+
 /** Post-creation: modify the live campaign */
 async function handlePostCreation(
   agent: GoogleAdsAgent,
@@ -788,14 +926,68 @@ async function handlePostCreation(
     }
   }
 
+  // Add ad to campaign
+  const addAdMatch = message.text.trim().match(/add\s+ad\s+(https?:\/\/\S+)/i);
+  if (addAdMatch) {
+    const finalUrl = addAdMatch[1];
+    if (!created.adGroupResourceName) {
+      return reply(message, "No ad group found for this campaign. Create one in Google Ads first.");
+    }
+
+    // Generate bilingual ad copy via AI
+    try {
+      if (isSlackConfigured()) {
+        await slackPost(message.channel_id, {
+          text: "Generating ad copy...",
+          blocks: thinkingBlocks("Generating bilingual ad copy"),
+          thread_ts: message.thread_ts ?? message.ts,
+        });
+      }
+
+      const aiRec = await generateRecommendations({
+        campaignType: "search",
+        brandOrProduct: `Campaign: ${rec.campaignName}. Landing page: ${finalUrl}`,
+      });
+
+      await agent.googleAds.mutateResource("adGroupAds", [{
+        create: {
+          ad_group: created.adGroupResourceName,
+          status: "PAUSED",
+          ad: {
+            responsive_search_ad: {
+              headlines: aiRec.adCopy.nl.headlines.slice(0, 15).map((h: string) => ({ text: h })),
+              descriptions: aiRec.adCopy.nl.descriptions.slice(0, 4).map((d: string) => ({ text: d })),
+              path1: aiRec.path1,
+              path2: aiRec.path2,
+            },
+            final_urls: [finalUrl],
+          },
+        },
+      }]);
+
+      return reply(message, [
+        `Ad created (PAUSED) with URL \`${finalUrl}\``,
+        `  ${aiRec.adCopy.nl.headlines.length} headlines · ${aiRec.adCopy.nl.descriptions.length} descriptions`,
+        "Review in Google Ads and enable when ready.",
+      ].join("\n"));
+    } catch (err) {
+      const errMsg = err instanceof Error ? err.message : String(err);
+      const policyMatch = errMsg.match(/"topic":\s*"([^"]+)"/);
+      if (policyMatch?.[1] === "DESTINATION_NOT_WORKING") {
+        return reply(message, `:warning: Ad rejected — URL \`${finalUrl}\` is not reachable. Check the URL and try again.`);
+      }
+      return reply(message, `Failed to create ad: ${errMsg.slice(0, 300)}`);
+    }
+  }
+
   // Unknown command — show help
   return reply(message, [
-    `Campaign *"${rec.campaignName}"* is created (PAUSED). You can:`,
-    "  `enable` — Start serving ads",
-    "  `pause` — Pause the campaign",
+    `Campaign *"${rec.campaignName}"* — you can:`,
+    "  `enable` / `pause` — Change campaign status",
     "  `adjust budget to €X` — Change daily budget",
     "  `end date YYYY-MM-DD` · `no end date` — Set/clear end date",
     "  `rename to [name]` — Rename the campaign",
+    "  `add ad https://url.com` — Create a responsive search ad",
     "  `done` — Close this session",
   ].join("\n"));
 }
