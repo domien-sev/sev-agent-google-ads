@@ -82,14 +82,14 @@ async function createBaseCampaign(
   budgetResourceName: string,
   extraFields: Record<string, unknown> = {},
 ): Promise<string> {
+  // Create campaign without dates — Google defaults to starting today.
+  // End date is set via a separate update call if needed.
   const result = await client.mutateResource("campaigns", [{
     create: {
       name: config.name,
       advertising_channel_type: channelType(config.type),
       status: "PAUSED",
       campaign_budget: budgetResourceName,
-      start_date: config.startDate.replace(/-/g, ""),
-      ...(config.endDate && { end_date: config.endDate.replace(/-/g, "") }),
       ...biddingStrategy(config),
       geo_target_type_setting: {
         positive_geo_target_type: "PRESENCE_OR_INTEREST",
@@ -98,7 +98,22 @@ async function createBaseCampaign(
       ...extraFields,
     },
   }]);
-  return result.results[0].resourceName;
+  const campaignRn = result.results[0].resourceName;
+
+  // Set end date via update if provided
+  if (config.endDate) {
+    try {
+      await client.mutateResource("campaigns", [{
+        update: { resourceName: campaignRn, endDate: config.endDate.replace(/-/g, "") },
+        updateMask: "end_date",
+      }]);
+    } catch (err) {
+      // Non-critical — campaign is created, end date just wasn't set
+      console.warn(`Failed to set end date: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
+  return campaignRn;
 }
 
 async function buildSearchCampaign(client: GoogleAdsClient, config: CampaignConfig): Promise<BuildResult> {
