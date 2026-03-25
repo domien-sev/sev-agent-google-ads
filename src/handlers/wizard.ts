@@ -35,6 +35,7 @@ import type { DirectPostResponse } from "../tools/reply.js";
 import { isSlackConfigured, slackPost } from "../tools/slack.js";
 import { storeAdCopy, retrieveSimilarAds, formatAdsForPrompt, extractBrand } from "../tools/ad-memory.js";
 import { searchBrandContext, searchEventContext } from "../tools/brand-knowledge.js";
+import { createRedTrackCampaign, isRedTrackConfigured } from "../tools/redtrack.js";
 import {
   wizardStartBlocks,
   eventListBlocks,
@@ -996,6 +997,24 @@ async function confirmAndBuild(
   const languages = session.eventConfig?.languages ?? ["nl", "fr"];
   const endDate = session.eventConfig?.campaignEndDate ?? rec.endDate;
 
+  // Create RedTrack campaign first to get tracking URL
+  let finalUrl = rec.finalUrl;
+  let redtrackCampaignId: string | undefined;
+  if (isRedTrackConfigured()) {
+    const brand = extractBrand(rec.campaignName);
+    const eventType = session.eventConfig?.event.type ?? "physical";
+    const rtResult = await createRedTrackCampaign({
+      brand,
+      eventType,
+      landingPageUrl: rec.finalUrl,
+    });
+    if (rtResult) {
+      finalUrl = rtResult.trackingUrl;
+      redtrackCampaignId = rtResult.campaignId;
+      console.log(`[wizard] RedTrack campaign created: ${rtResult.campaignId} → ${rtResult.trackingUrl}`);
+    }
+  }
+
   const config: CampaignConfig = {
     type,
     name: rec.campaignName,
@@ -1018,7 +1037,7 @@ async function confirmAndBuild(
     config.responsiveSearchAd = {
       headlines: primaryCopy.headlines.slice(0, 15),
       descriptions: primaryCopy.descriptions.slice(0, 4),
-      finalUrl: rec.finalUrl,
+      finalUrl,
       path1: rec.path1,
       path2: rec.path2,
     };
@@ -1087,7 +1106,7 @@ async function confirmAndBuild(
                     path1: rec.path1,
                     path2: rec.path2,
                   },
-                  final_urls: [rec.finalUrl],
+                  final_urls: [finalUrl],
                 },
               },
             }]);

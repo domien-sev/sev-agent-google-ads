@@ -1,0 +1,100 @@
+/**
+ * RedTrack integration for Google Ads campaign tracking.
+ * Creates RedTrack offer + campaign when a Google Ads campaign is confirmed.
+ * Returns tracking URL to use as final_url in ads.
+ */
+
+const REDTRACK_API_URL = process.env.REDTRACK_API_URL ?? "https://api.redtrack.io";
+const REDTRACK_API_KEY = process.env.REDTRACK_API_KEY ?? "";
+
+/** Google Ads tracking preset for Shopping Event VIP */
+const GOOGLE_ADS_PRESET = {
+  sourceId: "650ead3c8d33bd00010d71c5",
+  domainId: "650431d161f1c40001ae2b24",
+  trackingParams: "utm_campaign={replace}&sub2={keyword}&sub3={matchtype}&sub4={adgroupid}&sub5={creative}&sub6={campaignid}&sub7={device}&sub8={adposition}&sub9={network}&sub10={placement}&utm_source=Google&wbraid={wbraid}&gbraid={gbraid}&ref_id={gclid}",
+};
+
+const OFFER_TRACKING_PARAMS = "rtkcid={clickid}&clickid={clickid}&cmpid={campaignid}";
+
+export function isRedTrackConfigured(): boolean {
+  return REDTRACK_API_KEY.length > 0;
+}
+
+/**
+ * Create a full RedTrack campaign for a physical event Google Ads campaign.
+ * Returns the tracking URL to use as final_url in ads.
+ */
+export async function createRedTrackCampaign(params: {
+  brand: string;
+  eventType: "physical" | "online";
+  landingPageUrl: string;
+}): Promise<{ trackingUrl: string; campaignId: string } | null> {
+  if (!isRedTrackConfigured()) {
+    console.warn("[redtrack] Not configured — skipping");
+    return null;
+  }
+
+  try {
+    const now = new Date();
+    const yearMonth = `${now.getFullYear()}-${now.getMonth() + 1}`;
+    const brandClean = params.brand.replace(/\s+/g, "");
+    const eventLabel = params.eventType === "physical" ? "physical" : "online";
+
+    // 1. Create offer with event-specific landing page
+    const separator = params.landingPageUrl.includes("?") ? "&" : "?";
+    const offerUrl = `${params.landingPageUrl}${separator}${OFFER_TRACKING_PARAMS}`;
+    const offerName = `${params.brand} - ${eventLabel} - ${yearMonth}`;
+
+    const offerRes = await fetch(`${REDTRACK_API_URL}/offers?api_key=${REDTRACK_API_KEY}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: offerName, url: offerUrl }),
+    });
+
+    if (!offerRes.ok) {
+      console.error(`[redtrack] Create offer failed: ${offerRes.status} ${await offerRes.text()}`);
+      return null;
+    }
+
+    const offer = await offerRes.json() as { id: string };
+
+    // 2. Create campaign with the offer
+    const campaignTitle = `${yearMonth}-${brandClean}-${eventLabel}-GoogleAdstracking`;
+
+    const campaignRes = await fetch(`${REDTRACK_API_URL}/campaigns?api_key=${REDTRACK_API_KEY}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        title: campaignTitle,
+        source_id: GOOGLE_ADS_PRESET.sourceId,
+        domain_id: GOOGLE_ADS_PRESET.domainId,
+        status: 1,
+        streams: [{
+          weight: 100,
+          stream: {
+            title: campaignTitle,
+            landings: [],
+            offers: [{ id: offer.id, weight: 100 }],
+          },
+        }],
+      }),
+    });
+
+    if (!campaignRes.ok) {
+      console.error(`[redtrack] Create campaign failed: ${campaignRes.status} ${await campaignRes.text()}`);
+      return null;
+    }
+
+    const campaign = await campaignRes.json() as { id: string; trackback_url: string };
+
+    console.log(`[redtrack] Created campaign "${campaignTitle}" → ${campaign.trackback_url}`);
+
+    return {
+      trackingUrl: campaign.trackback_url,
+      campaignId: campaign.id,
+    };
+  } catch (err) {
+    console.error(`[redtrack] Error: ${err instanceof Error ? err.message : String(err)}`);
+    return null;
+  }
+}
