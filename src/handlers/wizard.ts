@@ -975,10 +975,11 @@ async function handlePostCreation(
     }
   }
 
-  // Add ad to campaign
-  const addAdMatch = message.text.trim().match(/add\s+ad\s+(https?:\/\/\S+)/i);
-  if (addAdMatch) {
-    const finalUrl = addAdMatch[1];
+  // Add ad to campaign — extract first URL from message starting with "add ad"
+  const isAddAd = lower.startsWith("add ad");
+  const urlInMessage = message.text.match(/(https?:\/\/[^\s>|]+)/i);
+  if (isAddAd && urlInMessage) {
+    const finalUrl = urlInMessage[1];
     if (!created.adGroupResourceName) {
       return reply(message, "No ad group found for this campaign. Create one in Google Ads first.");
     }
