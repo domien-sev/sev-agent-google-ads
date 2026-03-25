@@ -155,14 +155,19 @@ export function sourceCampaignBlocks(
 // --- Step 4: Recommendation Review ---
 
 export function recommendationBlocks(rec: WizardRecommendations): SlackBlock[] {
+  const fields = [
+    `*Budget:*\n€${rec.budget.dailyEuros}/day`,
+    `*Targeting:*\n${rec.targeting.locations.join(", ")}`,
+    `*Landing Page:*\n${rec.finalUrl}`,
+    `*URL Paths:*\n${rec.path1}${rec.path2 ? ` / ${rec.path2}` : ""}`,
+  ];
+  if (rec.endDate) {
+    fields.push(`*End Date:*\n${rec.endDate}`);
+  }
+
   const blocks: SlackBlock[] = [
     headerBlock(rec.campaignName),
-    sectionFields([
-      `*Budget:*\n€${rec.budget.dailyEuros}/day`,
-      `*Targeting:*\n${rec.targeting.locations.join(", ")}`,
-      `*Landing Page:*\n${rec.finalUrl}`,
-      `*URL Paths:*\n${rec.path1}${rec.path2 ? ` / ${rec.path2}` : ""}`,
-    ]),
+    sectionFields(fields),
     contextBlock([rec.budget.reasoning]),
     dividerBlock(),
   ];
@@ -224,7 +229,7 @@ export function recommendationBlocks(rec: WizardRecommendations): SlackBlock[] {
   // Modification hints
   blocks.push(
     contextBlock([
-      "Modify: `adjust budget to €X` · `url https://...` · `path outlet/sale` · `target BE, NL` · `rename to ...` · `add keyword ...` · `remove keyword ...`",
+      "Modify: `adjust budget to €X` · `end date YYYY-MM-DD` · `url https://...` · `path outlet/sale` · `target BE, NL` · `rename to ...` · `add/remove keyword ...`",
     ]),
   );
 

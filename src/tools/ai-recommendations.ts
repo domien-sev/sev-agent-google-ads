@@ -29,6 +29,7 @@ export interface WizardRecommendations {
   finalUrl: string;
   path1: string;
   path2: string;
+  endDate?: string;
 }
 
 /**
@@ -163,6 +164,7 @@ export function formatRecommendations(rec: WizardRecommendations): string {
     `*Budget:* €${rec.budget.dailyEuros}/day — ${rec.budget.reasoning}`,
     `*Landing Page:* ${rec.finalUrl}`,
     `*Targeting:* ${rec.targeting.locations.join(", ")} — ${rec.targeting.reasoning}`,
+    ...(rec.endDate ? [`*End Date:* ${rec.endDate}`] : []),
     "",
     "*Ad Copy (Dutch):*",
     `  Headlines (${rec.adCopy.nl.headlines.length}):`,
@@ -205,7 +207,7 @@ export function formatRecommendations(rec: WizardRecommendations): string {
 
   lines.push(
     "",
-    "_You can modify:_ `adjust budget to €X` | `url https://...` | `path shop/sale` | `target BE, NL` | `rename to ...` | `add keyword ...` | `remove keyword ...` | `regenerate copy`",
+    "_You can modify:_ `adjust budget to €X` | `end date YYYY-MM-DD` | `url https://...` | `path shop/sale` | `target BE, NL` | `rename to ...` | `add/remove keyword ...` | `regenerate copy`",
     "_Actions:_ `confirm` (API) | `export csv` (Google Ads Editor) | `show` | `cancel`",
   );
 

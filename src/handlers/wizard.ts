@@ -288,6 +288,7 @@ async function handleEventSelection(
     });
 
     if (event.url) recommendations.finalUrl = event.url;
+    if (event.endDate) recommendations.endDate = event.endDate.split("T")[0];
 
     session.recommendations = recommendations;
     session.step = "reviewing";
@@ -342,6 +343,7 @@ async function handleClone(
   let eventContext: string | undefined;
   let eventInfo: { title: string; dates: string; type: string; url?: string } | undefined;
   let matchedEventUrl: string | null = null;
+  let matchedEventEndDate: string | null = null;
 
   if (isEventSourceConfigured()) {
     try {
@@ -349,6 +351,7 @@ async function handleClone(
       if (matchedEvent) {
         eventContext = eventToAiContext(matchedEvent);
         matchedEventUrl = matchedEvent.url;
+        matchedEventEndDate = matchedEvent.endDate ? matchedEvent.endDate.split("T")[0] : null;
         eventInfo = {
           title: matchedEvent.titleNl,
           dates: matchedEvent.dateTextNl ?? matchedEvent.startDate?.split("T")[0] ?? "?",
@@ -366,6 +369,7 @@ async function handleClone(
   });
 
   if (matchedEventUrl) recommendations.finalUrl = matchedEventUrl;
+  if (matchedEventEndDate) recommendations.endDate = matchedEventEndDate;
 
   session.recommendations = recommendations;
   session.step = "reviewing";
@@ -521,6 +525,21 @@ async function handleReview(
     return reply(message, `URL paths set to \`${rec.path1}\`${rec.path2 ? ` / \`${rec.path2}\`` : ""}.`);
   }
 
+  // Set end date
+  const endDateMatch = message.text.trim().match(/(?:end\s*date|stop\s*date|einddatum)\s+(?:to\s+)?(\d{4}-\d{2}-\d{2})/i);
+  if (endDateMatch) {
+    rec.endDate = endDateMatch[1];
+    sessions.set(key, session);
+    return reply(message, `End date set to ${rec.endDate}. Type \`confirm\` to create or keep adjusting.`);
+  }
+
+  // Remove end date
+  if (lower === "no end date" || lower === "remove end date" || lower === "clear end date") {
+    rec.endDate = undefined;
+    sessions.set(key, session);
+    return reply(message, "End date removed (campaign will run indefinitely). Type `confirm` to create or keep adjusting.");
+  }
+
   // Change locations
   const locMatch = message.text.trim().match(/(?:target|location|locations?)\s+(?:to\s+)?(.+)/i);
   if (locMatch) {
@@ -539,7 +558,8 @@ async function handleReview(
   return reply(message, [
     "While reviewing, you can:",
     "  `adjust budget to €X` · `url https://...` · `path outlet/sale`",
-    "  `target BE, NL` · `rename to [name]` · `add/remove keyword [text]`",
+    "  `end date YYYY-MM-DD` · `no end date` · `target BE, NL`",
+    "  `rename to [name]` · `add/remove keyword [text]`",
     "  `regenerate copy` · `show` · `confirm` · `export csv` · `cancel`",
   ].join("\n"));
 }
@@ -561,6 +581,7 @@ async function confirmAndBuild(
     locations: rec.targeting.locations,
     languages: ["nl", "fr"],
     startDate: new Date().toISOString().split("T")[0],
+    ...(rec.endDate && { endDate: rec.endDate }),
   };
 
   if (type === "search") {
