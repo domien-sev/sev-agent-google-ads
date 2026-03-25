@@ -41,9 +41,11 @@ export async function createRedTrackCampaign(params: {
     const eventLabel = params.eventType === "physical" ? "physical" : "online";
     const campaignTitle = `${yearMonth}-${brandClean}-${eventLabel}-GoogleAdstracking`;
 
-    // Create campaign without streams — source template auto-applies tracking params.
-    // The actual landing page is set as final_url in Google Ads; RedTrack's tracking
-    // template wraps it with {lpurl}?cmpid=CAMPAIGN_ID&...
+    // Create campaign using copy_from to clone the funnel from a working campaign.
+    // The RedTrack API has a bug where POST /campaigns doesn't properly bind streams,
+    // but copy_from copies them correctly.
+    const TEMPLATE_CAMPAIGN_ID = "69affc3adfd9ed8898ffd140"; // Working Marie Méro campaign
+
     const campaignRes = await fetch(`${REDTRACK_API_URL}/campaigns?api_key=${REDTRACK_API_KEY}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -52,6 +54,7 @@ export async function createRedTrackCampaign(params: {
         source_id: GOOGLE_ADS_PRESET.sourceId,
         domain_id: GOOGLE_ADS_PRESET.domainId,
         status: 1,
+        copy_from: TEMPLATE_CAMPAIGN_ID,
       }),
     });
 
@@ -61,19 +64,6 @@ export async function createRedTrackCampaign(params: {
     }
 
     const campaign = await campaignRes.json() as { id: string; trackback_url: string };
-
-    // Add Offline Sales offer stream to the campaign (prevents "funnel deleted" warning)
-    try {
-      await fetch(`${REDTRACK_API_URL}/streams?api_key=${REDTRACK_API_KEY}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          campaign_id: campaign.id,
-          weight: 0,
-          offers: [{ id: "65b4ae865141de0001dfa8e1", weight: 100 }],
-        }),
-      });
-    } catch { /* non-critical */ }
 
     // Build tracking template: {lpurl}?cmpid=CAMPAIGN_ID&utm_campaign=...
     const trackingTemplate = `{lpurl}?cmpid=${campaign.id}&${GOOGLE_ADS_PRESET.trackingParams}`;
