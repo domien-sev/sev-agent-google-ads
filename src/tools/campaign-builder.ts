@@ -86,24 +86,42 @@ async function createBaseCampaign(
   budgetResourceName: string,
   extraFields: Record<string, unknown> = {},
 ): Promise<string> {
-  // Create campaign without dates — Google defaults to starting today.
-  // End date is set via a separate update call if needed.
-  const result = await client.mutateResource("campaigns", [{
-    create: {
-      name: config.name,
-      advertising_channel_type: channelType(config.type),
-      status: "PAUSED",
-      campaign_budget: budgetResourceName,
-      ...biddingStrategy(config),
-      geo_target_type_setting: {
-        positive_geo_target_type: "PRESENCE_OR_INTEREST",
-        negative_geo_target_type: "PRESENCE",
-      },
-      contains_eu_political_advertising: "DOES_NOT_CONTAIN_EU_POLITICAL_ADVERTISING",
-      ...extraFields,
-    },
-  }]);
-  const campaignRn = result.results[0].resourceName;
+  // Create campaign — retry with versioned name if duplicate
+  let campaignName = config.name;
+  let campaignRn: string = "";
+  for (let attempt = 0; attempt < 5; attempt++) {
+    try {
+      const result = await client.mutateResource("campaigns", [{
+        create: {
+          name: campaignName,
+          advertising_channel_type: channelType(config.type),
+          status: "PAUSED",
+          campaign_budget: budgetResourceName,
+          ...biddingStrategy(config),
+          geo_target_type_setting: {
+            positive_geo_target_type: "PRESENCE_OR_INTEREST",
+            negative_geo_target_type: "PRESENCE",
+          },
+          contains_eu_political_advertising: "DOES_NOT_CONTAIN_EU_POLITICAL_ADVERTISING",
+          ...extraFields,
+        },
+      }]);
+      campaignRn = result.results[0].resourceName;
+      if (attempt > 0) {
+        console.log(`[campaign-builder] Created with name "${campaignName}" (original was taken)`);
+      }
+      break;
+    } catch (err) {
+      const errMsg = err instanceof Error ? err.message : String(err);
+      if (errMsg.includes("DUPLICATE_CAMPAIGN_NAME") && attempt < 4) {
+        campaignName = `${config.name}_v${attempt + 2}`;
+        console.log(`[campaign-builder] Name taken, trying "${campaignName}"`);
+        continue;
+      }
+      throw err;
+    }
+  }
+  if (!campaignRn) throw new Error("Failed to create campaign after 5 attempts");
 
   // Set end date via update if provided
   if (config.endDate) {
