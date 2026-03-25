@@ -39,32 +39,11 @@ export async function createRedTrackCampaign(params: {
     const yearMonth = `${now.getFullYear()}-${now.getMonth() + 1}`;
     const brandClean = params.brand.replace(/\s+/g, "");
     const eventLabel = params.eventType === "physical" ? "physical" : "online";
-
-    // 1. Create offer with event-specific landing page
-    const separator = params.landingPageUrl.includes("?") ? "&" : "?";
-    const offerUrl = `${params.landingPageUrl}${separator}${OFFER_TRACKING_PARAMS}`;
-    const offerName = `${params.brand} - ${eventLabel} - ${yearMonth}`;
-
-    const offerRes = await fetch(`${REDTRACK_API_URL}/offers?api_key=${REDTRACK_API_KEY}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        title: offerName,
-        url: offerUrl,
-        program_id: "6502d74dccc90200010fe63a",
-      }),
-    });
-
-    if (!offerRes.ok) {
-      console.error(`[redtrack] Create offer failed: ${offerRes.status} ${await offerRes.text()}`);
-      return null;
-    }
-
-    const offer = await offerRes.json() as { id: string };
-
-    // 2. Create campaign with the offer
     const campaignTitle = `${yearMonth}-${brandClean}-${eventLabel}-GoogleAdstracking`;
 
+    // Create campaign without streams — source template auto-applies tracking params.
+    // The actual landing page is set as final_url in Google Ads; RedTrack's tracking
+    // template wraps it with {lpurl}?cmpid=CAMPAIGN_ID&...
     const campaignRes = await fetch(`${REDTRACK_API_URL}/campaigns?api_key=${REDTRACK_API_KEY}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -73,14 +52,6 @@ export async function createRedTrackCampaign(params: {
         source_id: GOOGLE_ADS_PRESET.sourceId,
         domain_id: GOOGLE_ADS_PRESET.domainId,
         status: 1,
-        streams: [{
-          weight: 100,
-          stream: {
-            title: campaignTitle,
-            landings: [],
-            offers: [{ id: offer.id, weight: 100 }],
-          },
-        }],
       }),
     });
 
