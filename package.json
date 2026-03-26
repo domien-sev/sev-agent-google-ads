@@ -13,20 +13,22 @@
     "lint": "tsc --noEmit"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.39.0",
+    "@directus/sdk": "^18.0.0",
+    "@domien-sev/ads-sdk": "^0.2.0",
     "@domien-sev/agent-sdk": "*",
     "@domien-sev/directus-sdk": "*",
     "@domien-sev/shared-types": "*",
-    "@domien-sev/ads-sdk": "^0.2.0",
-    "@directus/sdk": "^18.0.0",
-    "@anthropic-ai/sdk": "^0.39.0",
+    "node-cron": "^3.0.3",
     "pg": "^8.13.0"
   },
   "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/node-cron": "^3.0.11",
+    "@types/pg": "^8.11.0",
     "tsx": "^4.19.0",
     "typescript": "^5.7.0",
-    "vitest": "^3.0.0",
-    "@types/node": "^22.0.0",
-    "@types/pg": "^8.11.0"
+    "vitest": "^3.0.0"
   },
   "engines": {
     "node": ">=22.0.0"

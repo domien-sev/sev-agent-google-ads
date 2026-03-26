@@ -1,6 +1,7 @@
 import http from "node:http";
 import { GoogleAdsAgent } from "./agent.js";
 import { loadConfig, createHealthEndpoint } from "@domien-sev/agent-sdk";
+import { initScheduler, stopScheduler, runOptimizationCycleHttp } from "./scheduler.js";
 
 const PORT = parseInt(process.env.PORT ?? process.env.AGENT_PORT ?? "3000", 10);
 
@@ -40,6 +41,21 @@ async function main() {
         console.error("Error handling message:", errMsg);
         res.writeHead(500, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ error: errMsg }));
+      }
+      return;
+    }
+
+    // Optimization cycle endpoint — trigger via HTTP
+    if (req.url === "/optimize" && req.method === "POST") {
+      try {
+        const result = await runOptimizationCycleHttp(agent);
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify(result));
+      } catch (err) {
+        const errMsg = err instanceof Error ? err.message : String(err);
+        console.error("Optimization cycle error:", errMsg);
+        res.writeHead(500, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ ok: false, error: errMsg }));
       }
       return;
     }
@@ -142,6 +158,7 @@ async function main() {
   });
 
   const shutdown = async () => {
+    stopScheduler();
     server.close();
     await agent.stop();
     process.exit(0);
@@ -169,6 +186,9 @@ async function main() {
       }
     }
   }
+
+  // Start optimization scheduler (hourly rules + daily alerts + 6h data sync)
+  initScheduler(agent);
 }
 
 function readBody(req: http.IncomingMessage): Promise<string> {

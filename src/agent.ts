@@ -2,19 +2,21 @@ import { BaseAgent } from "@domien-sev/agent-sdk";
 import type { AgentConfig } from "@domien-sev/agent-sdk";
 import type { RoutedMessage, AgentResponse } from "@domien-sev/shared-types";
 import { reply } from "./tools/reply.js";
-import { GoogleAdsClient } from "@domien-sev/ads-sdk";
+import { GoogleAdsClient, PerformanceCollector } from "@domien-sev/ads-sdk";
 
 import { handleResearch } from "./handlers/research.js";
 import { handleCampaign } from "./handlers/campaign.js";
 import { handleKeywords } from "./handlers/keywords.js";
 import { handleAudiences } from "./handlers/audiences.js";
 import { handleOptimize } from "./handlers/optimize.js";
+import { handleOptimizeRules } from "./handlers/optimize-rules.js";
 import { handleReport } from "./handlers/report.js";
 import { handleCreativeRequest } from "./handlers/creative-request.js";
 import { handleWizard, isWizardMessage } from "./handlers/wizard.js";
 
 export class GoogleAdsAgent extends BaseAgent {
   public googleAds!: GoogleAdsClient;
+  public performanceCollector!: PerformanceCollector;
 
   constructor(config: AgentConfig) {
     super(config);
@@ -60,6 +62,12 @@ export class GoogleAdsAgent extends BaseAgent {
       this.logger.warn(`Google Ads API disabled — missing: ${missingGoogleEnvVars.join(", ")}`);
     }
 
+    // Initialize performance collector for optimization engine
+    this.performanceCollector = new PerformanceCollector();
+    if (this.googleAds) {
+      this.performanceCollector.registerClient(this.googleAds);
+    }
+
     this.logger.info("Google Ads agent started");
   }
 
@@ -97,7 +105,17 @@ export class GoogleAdsAgent extends BaseAgent {
         return handleAudiences(this, message);
       }
 
-      // Optimization
+      // Rule-based optimization + approval flow
+      if (text.startsWith("rules") || text.startsWith("status rule")) {
+        return handleOptimizeRules(this, message);
+      }
+
+      // Approval/rejection of pending recommendations
+      if (text.startsWith("approve") || text.startsWith("reject") || text.startsWith("snooze")) {
+        return handleOptimizeRules(this, message);
+      }
+
+      // Ad-hoc optimization analysis (legacy — still useful for quick checks)
       if (text.startsWith("optimize") || text.startsWith("rebalance") || text.startsWith("improve quality")) {
         return handleOptimize(this, message);
       }
@@ -182,7 +200,12 @@ export class GoogleAdsAgent extends BaseAgent {
         "`audience report` — Audience performance",
         "",
         "*Optimization:*",
-        "`optimize` — AI-powered optimization recommendations",
+        "`rules` — Run automated optimization rules (shared engine + approval flow)",
+        "`approve all` / `approve <id>` — Approve pending recommendations",
+        "`reject all` / `reject <id>` — Reject pending recommendations",
+        "`snooze all` — Snooze recommendations for next cycle",
+        "`status rules` — Show pending recommendations",
+        "`optimize` — Ad-hoc optimization analysis",
         "`rebalance budget` — Budget reallocation suggestions",
         "`improve quality` — Quality score improvement plan",
         "",
