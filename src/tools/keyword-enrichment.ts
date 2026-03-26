@@ -198,7 +198,7 @@ async function fetchKeywordHistory(
       const text = String(row.adGroupCriterion?.keyword?.text ?? "").toLowerCase();
       if (!keywordSet.has(text)) continue;
 
-      const existing = map.get(text) ?? {
+      const existing: KeywordHistory = map.get(text) ?? {
         keyword: row.adGroupCriterion?.keyword?.text ?? text,
         avgQualityScore: 0,
         totalImpressions: 0,
