@@ -1,6 +1,6 @@
 /**
  * Keyword research and planning helpers.
- * Uses GAQL queries to analyze existing keywords and suggest improvements.
+ * Uses Google Ads Keyword Planner API for discovery + GAQL for analysis.
  */
 import type { GoogleAdsClient } from "@domien-sev/ads-sdk";
 import type { KeywordMatchType } from "../types.js";
@@ -12,6 +12,157 @@ export interface KeywordSuggestion {
   competition?: "LOW" | "MEDIUM" | "HIGH";
   suggestedBid?: number;
   reason: string;
+}
+
+export interface KeywordIdea {
+  keyword: string;
+  avgMonthlySearches: number;
+  competition: "LOW" | "MEDIUM" | "HIGH" | "UNSPECIFIED";
+  competitionIndex: number;
+  lowTopOfPageBidMicros: number;
+  highTopOfPageBidMicros: number;
+}
+
+/**
+ * Research keyword ideas using Google Ads Keyword Planner API.
+ *
+ * @param seedKeywords - Starting keywords to expand from
+ * @param pageUrl - Optional landing page URL for contextual suggestions
+ * @param language - Language code: "1000" (EN), "1001" (FR), "1043" (NL)
+ * @param geoTargets - Geo target constants: "2056" (Belgium)
+ */
+export async function researchKeywords(
+  client: GoogleAdsClient,
+  params: {
+    seedKeywords?: string[];
+    pageUrl?: string;
+    language?: string;
+    geoTargets?: string[];
+    limit?: number;
+  },
+): Promise<KeywordIdea[]> {
+  const languageId = params.language ?? "1043"; // Dutch by default
+  const geoTargetIds = params.geoTargets ?? ["2056"]; // Belgium
+
+  const body: Record<string, unknown> = {
+    language: `languageConstants/${languageId}`,
+    geoTargetConstants: geoTargetIds.map((id) => `geoTargetConstants/${id}`),
+    keywordPlanNetwork: "GOOGLE_SEARCH",
+    pageSize: params.limit ?? 50,
+  };
+
+  if (params.seedKeywords?.length) {
+    body.keywordSeed = { keywords: params.seedKeywords };
+  }
+  if (params.pageUrl) {
+    body.urlSeed = { url: params.pageUrl };
+  }
+  // If both provided, use keywordAndUrlSeed
+  if (params.seedKeywords?.length && params.pageUrl) {
+    delete body.keywordSeed;
+    delete body.urlSeed;
+    body.keywordAndUrlSeed = {
+      keywords: params.seedKeywords,
+      url: params.pageUrl,
+    };
+  }
+
+  const data = await client.post(
+    "keywordPlanIdeas:generateKeywordIdeas",
+    body,
+  ) as { results?: Array<Record<string, any>> };
+
+  const ideas: KeywordIdea[] = [];
+  for (const row of data.results ?? []) {
+    const metrics = row.keywordIdeaMetrics ?? {};
+    ideas.push({
+      keyword: row.text ?? "",
+      avgMonthlySearches: Number(metrics.avgMonthlySearches ?? 0),
+      competition: mapCompetition(metrics.competition),
+      competitionIndex: Number(metrics.competitionIndex ?? 0),
+      lowTopOfPageBidMicros: Number(metrics.lowTopOfPageBidMicros ?? 0),
+      highTopOfPageBidMicros: Number(metrics.highTopOfPageBidMicros ?? 0),
+    });
+  }
+
+  return ideas.sort((a, b) => b.avgMonthlySearches - a.avgMonthlySearches);
+}
+
+function mapCompetition(val: string | undefined): KeywordIdea["competition"] {
+  if (val === "LOW" || val === "MEDIUM" || val === "HIGH") return val;
+  return "UNSPECIFIED";
+}
+
+/**
+ * Get historical metrics for a specific list of keywords.
+ */
+export async function getKeywordMetrics(
+  client: GoogleAdsClient,
+  keywords: string[],
+  params?: {
+    language?: string;
+    geoTargets?: string[];
+  },
+): Promise<KeywordIdea[]> {
+  const languageId = params?.language ?? "1043";
+  const geoTargetIds = params?.geoTargets ?? ["2056"];
+
+  const body: Record<string, unknown> = {
+    language: `languageConstants/${languageId}`,
+    geoTargetConstants: geoTargetIds.map((id) => `geoTargetConstants/${id}`),
+    keywordPlanNetwork: "GOOGLE_SEARCH",
+    keywordSeed: { keywords },
+  };
+
+  const data = await client.post(
+    "keywordPlanIdeas:generateKeywordIdeas",
+    body,
+  ) as { results?: Array<Record<string, any>> };
+
+  // Filter to only exact matches from our input
+  const inputSet = new Set(keywords.map((k) => k.toLowerCase()));
+  const ideas: KeywordIdea[] = [];
+
+  for (const row of data.results ?? []) {
+    const text = (row.text ?? "").toLowerCase();
+    if (!inputSet.has(text)) continue;
+
+    const metrics = row.keywordIdeaMetrics ?? {};
+    ideas.push({
+      keyword: row.text ?? "",
+      avgMonthlySearches: Number(metrics.avgMonthlySearches ?? 0),
+      competition: mapCompetition(metrics.competition),
+      competitionIndex: Number(metrics.competitionIndex ?? 0),
+      lowTopOfPageBidMicros: Number(metrics.lowTopOfPageBidMicros ?? 0),
+      highTopOfPageBidMicros: Number(metrics.highTopOfPageBidMicros ?? 0),
+    });
+  }
+
+  return ideas;
+}
+
+/**
+ * Format keyword ideas for Slack display.
+ */
+export function formatKeywordIdeas(ideas: KeywordIdea[], title: string): string {
+  if (ideas.length === 0) return `${title}\n\nNo keyword ideas found.`;
+
+  const lines = [`*${title}*`, ""];
+  for (const idea of ideas.slice(0, 30)) {
+    const vol = idea.avgMonthlySearches.toLocaleString();
+    const lowBid = (idea.lowTopOfPageBidMicros / 1_000_000).toFixed(2);
+    const highBid = (idea.highTopOfPageBidMicros / 1_000_000).toFixed(2);
+    const comp = idea.competition === "UNSPECIFIED" ? "?" : idea.competition.charAt(0);
+    lines.push(
+      `\`${idea.keyword}\` — ${vol}/mo | ${comp} | €${lowBid}–${highBid}`,
+    );
+  }
+
+  if (ideas.length > 30) {
+    lines.push(`\n_...and ${ideas.length - 30} more_`);
+  }
+
+  return lines.join("\n");
 }
 
 export interface NegativeKeywordCandidate {

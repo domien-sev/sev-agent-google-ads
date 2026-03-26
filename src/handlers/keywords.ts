@@ -1,7 +1,7 @@
 import type { RoutedMessage, AgentResponse } from "@domien-sev/shared-types";
 import type { GoogleAdsAgent } from "../agent.js";
 import * as gaql from "../tools/gaql.js";
-import { findNegativeCandidates, addNegativeKeywords, getQualityScoreBreakdown } from "../tools/keyword-planner.js";
+import { findNegativeCandidates, addNegativeKeywords, getQualityScoreBreakdown, researchKeywords, formatKeywordIdeas } from "../tools/keyword-planner.js";
 import { syncKeywords, syncSearchTerms } from "../tools/directus-sync.js";
 import { reply } from "../tools/reply.js";
 
@@ -11,6 +11,7 @@ import { reply } from "../tools/reply.js";
  * Commands:
  *   "keywords for [topic]" — Keyword performance overview
  *   "keyword report" — Quality score + performance report
+ *   "keyword research [seeds]" — Discover new keyword ideas via Keyword Planner
  *   "add negatives [terms]" — Add negative keywords
  *   "search terms [campaign]" — Search term report
  */
@@ -30,6 +31,10 @@ export async function handleKeywords(
 
   if (text.includes("keyword report") || text.includes("quality score")) {
     return handleKeywordReport(agent, message);
+  }
+
+  if (text.includes("keyword research") || text.includes("research keyword")) {
+    return handleKeywordResearch(agent, message);
   }
 
   // Default: keyword overview
@@ -195,6 +200,71 @@ async function handleSearchTerms(
   );
 
   return reply(message, lines.join("\n"));
+}
+
+async function handleKeywordResearch(
+  agent: GoogleAdsAgent,
+  message: RoutedMessage,
+): Promise<AgentResponse> {
+  const text = message.text.trim();
+  const afterCommand = text.replace(/^.*?keyword\s*research\s*/i, "").trim();
+
+  // Parse seed keywords and optional language/url
+  let seedKeywords: string[] = [];
+  let pageUrl: string | undefined;
+  let language: string | undefined;
+
+  // Check for url: prefix
+  const urlMatch = afterCommand.match(/url:\s*(\S+)/i);
+  if (urlMatch) {
+    pageUrl = urlMatch[1];
+  }
+
+  // Check for lang: prefix (nl, fr, en)
+  const langMatch = afterCommand.match(/lang:\s*(nl|fr|en)/i);
+  if (langMatch) {
+    const langMap: Record<string, string> = { nl: "1043", fr: "1001", en: "1000" };
+    language = langMap[langMatch[1].toLowerCase()];
+  }
+
+  // Everything else is seed keywords (comma or space separated)
+  const cleaned = afterCommand
+    .replace(/url:\s*\S+/i, "")
+    .replace(/lang:\s*\w+/i, "")
+    .trim();
+
+  if (cleaned) {
+    seedKeywords = cleaned.split(/[,;]+/).map((s) => s.trim()).filter(Boolean);
+  }
+
+  if (seedKeywords.length === 0 && !pageUrl) {
+    return reply(
+      message,
+      "Usage: `keyword research [seed keywords]`\n" +
+        "Options: `lang:nl|fr|en` `url:https://...`\n" +
+        "Example: `keyword research eastpak rugzak, schooltas lang:nl`",
+    );
+  }
+
+  const ideas = await researchKeywords(agent.googleAds, {
+    seedKeywords: seedKeywords.length > 0 ? seedKeywords : undefined,
+    pageUrl,
+    language,
+  });
+
+  if (ideas.length === 0) {
+    return reply(message, "No keyword ideas found for those seeds. Try broader terms.");
+  }
+
+  const title = `Keyword Research — ${seedKeywords.length > 0 ? seedKeywords.join(", ") : pageUrl ?? ""}`;
+  const formatted = formatKeywordIdeas(ideas, title);
+
+  // Add summary stats
+  const avgVol = ideas.reduce((s, i) => s + i.avgMonthlySearches, 0) / ideas.length;
+  const avgBid = ideas.reduce((s, i) => s + i.highTopOfPageBidMicros, 0) / ideas.length / 1_000_000;
+  const summary = `\n\n_${ideas.length} ideas | Avg volume: ${Math.round(avgVol).toLocaleString()}/mo | Avg top bid: €${avgBid.toFixed(2)}_`;
+
+  return reply(message, formatted + summary);
 }
 
 async function handleAddNegatives(
