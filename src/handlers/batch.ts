@@ -1,6 +1,7 @@
 /**
  * Batch campaign creation handler.
  * Creates multiple Google Ads Search campaigns for all brands at an event.
+ * Separate campaigns per language (NL + FR) for proper audience targeting.
  *
  * POST /batch-campaigns
  * Body: { eventId, brands?, budget?, radius?, execute?, eventShortName? }
@@ -16,10 +17,9 @@ import type { EventData } from "../tools/event-source.js";
 import { researchKeywords } from "../tools/keyword-planner.js";
 import type { KeywordIdea } from "../tools/keyword-planner.js";
 import { generateRecommendations } from "../tools/ai-recommendations.js";
-import type { WizardRecommendations } from "../tools/ai-recommendations.js";
 import { buildCampaign } from "../tools/campaign-builder.js";
 import { createCampaignAssets, generateEventSitelinks, generateEventCallouts } from "../tools/asset-builder.js";
-import { storeAdCopy, extractBrand } from "../tools/ad-memory.js";
+import { storeAdCopy } from "../tools/ad-memory.js";
 import { createRedTrackCampaign, isRedTrackConfigured } from "../tools/redtrack.js";
 import { searchBrandContext } from "../tools/brand-knowledge.js";
 import type { CampaignConfig, GoogleCampaignType } from "../types.js";
@@ -27,20 +27,20 @@ import type { CampaignConfig, GoogleCampaignType } from "../types.js";
 export interface BatchRequest {
   eventId: string;
   brands?: string[];
-  budget?: number;
+  budget?: number;      // total per brand (split across NL + FR)
   radius?: number;
   execute?: boolean;
   eventShortName?: string;
 }
 
-interface BrandPlan {
+interface CampaignPlan {
   brand: string;
+  lang: "nl" | "fr";
   campaignName: string;
   keywords: Array<{ text: string; matchType: string; volume?: number; competition?: string }>;
   totalVolume: number;
   estimatedBudget: number;
-  sampleHeadlinesNl: string[];
-  sampleHeadlinesFr: string[];
+  sampleHeadlines: string[];
   status: "NEW" | "EXISTS";
   existingCampaignId?: string;
 }
@@ -55,7 +55,7 @@ interface BatchPreviewResponse {
     brandCount: number;
     slug: string;
   };
-  campaigns: BrandPlan[];
+  campaigns: CampaignPlan[];
   totals: {
     newCampaigns: number;
     existingCampaigns: number;
@@ -67,12 +67,18 @@ interface BatchPreviewResponse {
 interface BatchExecuteResponse {
   ok: true;
   mode: "execute";
-  created: Array<{ brand: string; campaignName: string; resourceName: string; adGroups: number }>;
-  skipped: Array<{ brand: string; reason: string }>;
-  failed: Array<{ brand: string; error: string }>;
+  created: Array<{ brand: string; lang: string; campaignName: string; resourceName: string }>;
+  skipped: Array<{ brand: string; lang: string; reason: string }>;
+  failed: Array<{ brand: string; lang: string; error: string }>;
 }
 
 type BatchResponse = BatchPreviewResponse | BatchExecuteResponse | { ok: false; error: string };
+
+// Google Ads language targeting constants
+const LANG_CONSTANTS: Record<string, string> = {
+  nl: "languageConstants/1043",
+  fr: "languageConstants/1001",
+};
 
 /**
  * Main batch handler — called from HTTP endpoint.
@@ -85,7 +91,6 @@ export async function handleBatchCampaigns(
     return { ok: false, error: "Google Ads client not configured" };
   }
 
-  // 1. Fetch event data
   if (!isEventSourceConfigured()) {
     return { ok: false, error: "Event source not configured (WEBSITE_COLLAB_DIRECTUS_URL)" };
   }
@@ -100,53 +105,59 @@ export async function handleBatchCampaigns(
     return { ok: false, error: "No brands found for this event" };
   }
 
-  const budget = request.budget ?? 5;
+  const totalBudgetPerBrand = request.budget ?? 20;
+  const budgetPerLang = Math.round(totalBudgetPerBrand / 2);
   const radius = request.radius ?? 50;
   const shortName = request.eventShortName ?? deriveShortName(event);
   const datePrefix = deriveDatePrefix(event);
 
-  // 2. Check existing campaigns
+  // Check existing campaigns
   const existingMap = await findExistingCampaigns(agent, datePrefix, shortName);
 
-  // 3. Build plans for each brand
-  console.log(`[batch] Planning ${brands.length} campaigns for "${event.titleNl ?? event.titleFr}"`);
+  console.log(`[batch] Planning ${brands.length} brands x 2 languages = ${brands.length * 2} campaigns for "${event.titleNl ?? event.titleFr}"`);
 
-  const plans: BrandPlan[] = [];
+  const plans: CampaignPlan[] = [];
+
   for (const brand of brands) {
-    const campaignName = `${datePrefix}_${normalizeBrandName(brand)}_${shortName}`;
-
-    if (existingMap.has(campaignName.toLowerCase())) {
-      plans.push({
-        brand,
-        campaignName,
-        keywords: [],
-        totalVolume: 0,
-        estimatedBudget: budget,
-        sampleHeadlinesNl: [],
-        sampleHeadlinesFr: [],
-        status: "EXISTS",
-        existingCampaignId: existingMap.get(campaignName.toLowerCase()),
-      });
-      continue;
-    }
-
-    // Keyword research for this brand
+    // Keyword research once per brand (shared across NL + FR)
     const keywords = await researchBrandKeywords(agent, brand, shortName, event);
     const totalVolume = keywords.reduce((s, k) => s + (k.volume ?? 0), 0);
 
-    plans.push({
-      brand,
-      campaignName,
-      keywords,
-      totalVolume,
-      estimatedBudget: budget,
-      sampleHeadlinesNl: generateSampleHeadlines(brand, event, "nl"),
-      sampleHeadlinesFr: generateSampleHeadlines(brand, event, "fr"),
-      status: "NEW",
-    });
+    for (const lang of ["nl", "fr"] as const) {
+      const campaignName = `${datePrefix}_${normalizeBrandName(brand)}_${shortName}_${lang.toUpperCase()}`;
+
+      if (existingMap.has(campaignName.toLowerCase())) {
+        plans.push({
+          brand,
+          lang,
+          campaignName,
+          keywords: [],
+          totalVolume: 0,
+          estimatedBudget: budgetPerLang,
+          sampleHeadlines: [],
+          status: "EXISTS",
+          existingCampaignId: existingMap.get(campaignName.toLowerCase()),
+        });
+        continue;
+      }
+
+      // Filter keywords by language relevance
+      const langKeywords = filterKeywordsByLang(keywords, lang);
+
+      plans.push({
+        brand,
+        lang,
+        campaignName,
+        keywords: langKeywords,
+        totalVolume,
+        estimatedBudget: budgetPerLang,
+        sampleHeadlines: generateSampleHeadlines(brand, event, lang),
+        status: "NEW",
+      });
+    }
   }
 
-  // Preview mode — return plan
+  // Preview mode
   if (!request.execute) {
     const newPlans = plans.filter((p) => p.status === "NEW");
     return {
@@ -163,33 +174,53 @@ export async function handleBatchCampaigns(
       totals: {
         newCampaigns: newPlans.length,
         existingCampaigns: plans.length - newPlans.length,
-        totalDailyBudget: newPlans.length * budget,
+        totalDailyBudget: newPlans.length * budgetPerLang,
         totalKeywords: newPlans.reduce((s, p) => s + p.keywords.length, 0),
       },
     };
   }
 
-  // Execute mode — create campaigns
+  // Execute mode
   console.log(`[batch] Executing: creating ${plans.filter((p) => p.status === "NEW").length} campaigns`);
 
   const created: BatchExecuteResponse["created"] = [];
   const skipped: BatchExecuteResponse["skipped"] = [];
   const failed: BatchExecuteResponse["failed"] = [];
 
+  // Generate AI copy once per brand (reused for both NL and FR campaigns)
+  const copyCache = new Map<string, Awaited<ReturnType<typeof generateRecommendations>>>();
+
   for (const plan of plans) {
     if (plan.status === "EXISTS") {
-      skipped.push({ brand: plan.brand, reason: `Campaign ${plan.campaignName} already exists` });
+      skipped.push({ brand: plan.brand, lang: plan.lang, reason: `Campaign ${plan.campaignName} already exists` });
       continue;
     }
 
     try {
-      const result = await createBrandCampaign(agent, plan, event, budget, radius);
+      // Get or generate ad copy for this brand
+      let rec = copyCache.get(plan.brand);
+      if (!rec) {
+        let ragContext = "";
+        try {
+          const brandCtx = await searchBrandContext(plan.brand, "physical", "search");
+          if (brandCtx) ragContext = brandCtx;
+        } catch { /* non-fatal */ }
+
+        rec = await generateRecommendations({
+          brandOrProduct: buildBrandContext(plan.brand, event),
+          campaignType: "search",
+          ragContext,
+        });
+        copyCache.set(plan.brand, rec);
+      }
+
+      const result = await createLangCampaign(agent, plan, event, rec, budgetPerLang, radius);
       created.push(result);
       console.log(`[batch] Created: ${plan.campaignName} (${result.resourceName})`);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      failed.push({ brand: plan.brand, error: msg });
-      console.error(`[batch] Failed: ${plan.brand} — ${msg}`);
+      failed.push({ brand: plan.brand, lang: plan.lang, error: msg });
+      console.error(`[batch] Failed: ${plan.campaignName} — ${msg}`);
     }
   }
 
@@ -203,44 +234,36 @@ async function researchBrandKeywords(
   brand: string,
   eventShortName: string,
   event: EventData,
-): Promise<BrandPlan["keywords"]> {
-  // Build seed keywords
-  const seedsNl = [
-    `${brand} outlet`,
-    `${brand} private sale`,
-    `${brand} solden`,
-    `${brand} korting`,
-    `${eventShortName} ${brand}`,
-  ];
+): Promise<Array<{ text: string; matchType: string; volume?: number; competition?: string; lang?: "nl" | "fr" | "both" }>> {
+  const city = extractCity(event);
 
-  const seedsFr = [
-    `${brand} outlet`,
-    `${brand} vente privée`,
-    `${brand} soldes`,
-    `${brand} réduction`,
-  ];
-
-  // Base keywords we always include (manually crafted, high intent)
-  const baseKeywords: BrandPlan["keywords"] = [
-    { text: `${brand} outlet`, matchType: "EXACT" },
-    { text: `${brand} private sale`, matchType: "EXACT" },
-    { text: `${brand} solden`, matchType: "PHRASE" },
-    { text: `${brand} korting`, matchType: "PHRASE" },
-    { text: `${brand} soldes`, matchType: "PHRASE" },
-    { text: `${brand} vente privée`, matchType: "PHRASE" },
-    { text: `${brand} outlet ${extractCity(event)}`, matchType: "PHRASE" },
-    { text: `${eventShortName} ${brand}`, matchType: "PHRASE" },
-    { text: brand, matchType: "BROAD" },
+  // Base keywords — shared across both languages
+  const baseKeywords: Array<{ text: string; matchType: string; lang?: "nl" | "fr" | "both" }> = [
+    { text: `${brand} outlet`, matchType: "EXACT", lang: "both" },
+    { text: `${brand} private sale`, matchType: "EXACT", lang: "both" },
+    { text: `${brand} outlet ${city}`, matchType: "PHRASE", lang: "both" },
+    { text: `${eventShortName} ${brand}`, matchType: "PHRASE", lang: "both" },
+    { text: brand, matchType: "BROAD", lang: "both" },
+    // NL-specific
+    { text: `${brand} solden`, matchType: "PHRASE", lang: "nl" },
+    { text: `${brand} korting`, matchType: "PHRASE", lang: "nl" },
+    { text: `${brand} uitverkoop`, matchType: "PHRASE", lang: "nl" },
+    // FR-specific
+    { text: `${brand} soldes`, matchType: "PHRASE", lang: "fr" },
+    { text: `${brand} vente privée`, matchType: "PHRASE", lang: "fr" },
+    { text: `${brand} réduction`, matchType: "PHRASE", lang: "fr" },
   ];
 
   // Enrich with Keyword Planner data
   try {
+    const seedsNl = [`${brand} outlet`, `${brand} private sale`, `${brand} solden`, `${brand} korting`];
+    const seedsFr = [`${brand} outlet`, `${brand} vente privée`, `${brand} soldes`];
+
     const [nlIdeas, frIdeas] = await Promise.allSettled([
       researchKeywords(agent.googleAds, { seedKeywords: seedsNl, language: "1043", limit: 20 }),
       researchKeywords(agent.googleAds, { seedKeywords: seedsFr, language: "1001", limit: 15 }),
     ]);
 
-    // Build volume lookup from planner results
     const volumeMap = new Map<string, KeywordIdea>();
     for (const result of [nlIdeas, frIdeas]) {
       if (result.status === "fulfilled") {
@@ -250,86 +273,76 @@ async function researchBrandKeywords(
       }
     }
 
-    // Enrich base keywords with volume data
+    // Enrich base keywords
     for (const kw of baseKeywords) {
       const idea = volumeMap.get(kw.text.toLowerCase());
       if (idea) {
-        kw.volume = idea.avgMonthlySearches;
-        kw.competition = idea.competition === "UNSPECIFIED" ? undefined : idea.competition;
+        (kw as any).volume = idea.avgMonthlySearches;
+        (kw as any).competition = idea.competition === "UNSPECIFIED" ? undefined : idea.competition;
       }
     }
 
-    // Add top planner suggestions not already in base
+    // Add top planner suggestions
     const existingTexts = new Set(baseKeywords.map((k) => k.text.toLowerCase()));
-    const extras: BrandPlan["keywords"] = [];
+    const extras: typeof baseKeywords = [];
+    const brandFirst = brand.toLowerCase().split(" ")[0];
 
     for (const [, idea] of volumeMap) {
       if (existingTexts.has(idea.keyword.toLowerCase())) continue;
       if (idea.avgMonthlySearches < 10) continue;
-      // Only include brand-related keywords
-      if (!idea.keyword.toLowerCase().includes(brand.toLowerCase().split(" ")[0])) continue;
+      if (!idea.keyword.toLowerCase().includes(brandFirst)) continue;
 
       extras.push({
         text: idea.keyword,
         matchType: idea.competition === "HIGH" ? "EXACT" : "PHRASE",
-        volume: idea.avgMonthlySearches,
-        competition: idea.competition === "UNSPECIFIED" ? undefined : idea.competition,
+        lang: "both",
       });
-
       if (extras.length >= 6) break;
     }
 
-    return [...baseKeywords, ...extras];
+    return [...baseKeywords, ...extras] as any;
   } catch (err) {
     console.warn(`[batch] Keyword Planner failed for ${brand}: ${err instanceof Error ? err.message : String(err)}`);
-    return baseKeywords;
+    return baseKeywords as any;
   }
+}
+
+/**
+ * Filter keywords relevant to a specific language.
+ */
+function filterKeywordsByLang(
+  keywords: Array<{ text: string; matchType: string; volume?: number; competition?: string; lang?: string }>,
+  lang: "nl" | "fr",
+): CampaignPlan["keywords"] {
+  return keywords
+    .filter((k) => !k.lang || k.lang === "both" || k.lang === lang)
+    .map(({ text, matchType, volume, competition }) => ({ text, matchType, volume, competition }));
 }
 
 // ── Campaign Creation ───────────────────────────────────────────────
 
-async function createBrandCampaign(
+async function createLangCampaign(
   agent: GoogleAdsAgent,
-  plan: BrandPlan,
+  plan: CampaignPlan,
   event: EventData,
+  rec: Awaited<ReturnType<typeof generateRecommendations>>,
   budget: number,
   radius: number,
-): Promise<{ brand: string; campaignName: string; resourceName: string; adGroups: number }> {
-  const brand = plan.brand;
-  const eventUrl = `https://www.shoppingeventvip.be/nl/event/${(event as any).slug ?? "le-salon-vip"}`;
-  const eventUrlFr = eventUrl.replace("/nl/", "/fr/");
+): Promise<{ brand: string; lang: string; campaignName: string; resourceName: string }> {
+  const lang = plan.lang;
+  const slug = (event as any).slug ?? "le-salon-vip";
+  const eventUrl = lang === "fr"
+    ? `https://www.shoppingeventvip.be/fr/event/${slug}`
+    : `https://www.shoppingeventvip.be/nl/event/${slug}`;
 
-  // Gather RAG context for better ad copy
-  let ragContext = "";
-  try {
-    const brandCtx = await searchBrandContext(brand, "physical", "search");
-    if (brandCtx) ragContext = brandCtx;
-  } catch { /* non-fatal */ }
+  const adCopy = rec.adCopy[lang] ?? rec.adCopy.nl;
+  const endDate = event.suggestedCampaignEnd ?? event.endDate?.split("T")[0];
 
-  // Generate bilingual ad copy via AI
-  const rec = await generateRecommendations({
-    brandOrProduct: buildBrandContext(brand, event),
-    campaignType: "search",
-    ragContext,
-  });
-
-  // Override AI recommendations with our plan data
-  rec.campaignName = plan.campaignName;
-  rec.keywords = plan.keywords.map((k) => ({ text: k.text, matchType: k.matchType as any, group: "batch" }));
-  rec.budget = { dailyEuros: budget, reasoning: "Batch event campaign" };
-  rec.finalUrl = eventUrl;
-  rec.endDate = event.suggestedCampaignEnd ?? event.endDate?.split("T")[0];
-
-  // Build campaign config
-  const endDate = rec.endDate;
-  const languages = ["nl", "fr"];
-  const primaryLang = "nl";
-
-  // RedTrack
+  // RedTrack (one per brand+lang)
   let trackingTemplate: string | undefined;
   if (isRedTrackConfigured()) {
     try {
-      const rt = await createRedTrackCampaign({ brand, eventType: "physical", landingPageUrl: eventUrl });
+      const rt = await createRedTrackCampaign({ brand: plan.brand, eventType: "physical", landingPageUrl: eventUrl });
       if (rt) trackingTemplate = rt.trackingTemplate;
     } catch { /* non-fatal */ }
   }
@@ -339,18 +352,18 @@ async function createBrandCampaign(
     name: plan.campaignName,
     dailyBudgetMicros: Math.round(budget * 1_000_000),
     locations: ["BE"],
-    languages,
+    languages: [lang],  // Single language targeting
     startDate: new Date().toISOString().split("T")[0],
     ...(endDate && { endDate }),
     targetCountry: "BE",
     proximityRadius: radius,
     proximityAddress: event.locationText ?? "Schrijberg 189/193, Sint-Niklaas",
     proximityPostalCode: event.postalCode ?? "9111",
-    keywords: rec.keywords.map((k) => ({ text: k.text, matchType: k.matchType as any })),
-    adGroupName: `${plan.campaignName} - NL`,
+    keywords: plan.keywords.map((k) => ({ text: k.text, matchType: k.matchType as any })),
+    adGroupName: `${plan.campaignName}`,
     responsiveSearchAd: {
-      headlines: rec.adCopy.nl.headlines,
-      descriptions: rec.adCopy.nl.descriptions,
+      headlines: adCopy.headlines,
+      descriptions: adCopy.descriptions,
       finalUrl: eventUrl,
       path1: rec.path1,
       path2: rec.path2,
@@ -358,112 +371,72 @@ async function createBrandCampaign(
     ...(trackingTemplate && { trackingUrlTemplate: trackingTemplate }),
   };
 
-  // Build primary campaign + NL ad group
+  // Build campaign
   const result = await buildCampaign(agent.googleAds, config);
-  let adGroupCount = 1;
 
-  // Create FR ad group
-  if (result.campaignResourceName && rec.adCopy.fr) {
-    try {
-      const frAdGroupResult = await agent.googleAds.mutateResource("adGroups", [{
+  // Set language targeting via campaign criterion
+  try {
+    const langConstant = LANG_CONSTANTS[lang];
+    if (langConstant) {
+      await agent.googleAds.mutateResource("campaignCriteria", [{
         create: {
-          name: `${plan.campaignName} - FR`,
           campaign: result.campaignResourceName,
-          type: "SEARCH_STANDARD",
-          status: "ENABLED",
+          language: { language_constant: langConstant },
         },
       }]);
-      const frAdGroupRn = frAdGroupResult.results[0].resourceName;
-
-      // Add keywords to FR ad group
-      if (rec.keywords.length > 0) {
-        await agent.googleAds.mutateResource("adGroupCriteria",
-          rec.keywords.map((k) => ({
-            create: {
-              ad_group: frAdGroupRn,
-              status: "ENABLED",
-              keyword: { text: k.text, match_type: k.matchType },
-            },
-          })),
-        );
-      }
-
-      // Create FR RSA
-      if (rec.adCopy.fr.headlines.length > 0) {
-        await agent.googleAds.mutateResource("adGroupAds", [{
-          create: {
-            ad_group: frAdGroupRn,
-            status: "ENABLED",
-            ad: {
-              responsive_search_ad: {
-                headlines: rec.adCopy.fr.headlines.slice(0, 15).map((h) => ({ text: h })),
-                descriptions: rec.adCopy.fr.descriptions.slice(0, 4).map((d) => ({ text: d })),
-                path1: rec.path1,
-                path2: rec.path2,
-              },
-              final_urls: [eventUrlFr],
-            },
-          },
-        }]);
-      }
-
-      adGroupCount = 2;
-    } catch (err) {
-      console.warn(`[batch] FR ad group failed for ${brand}: ${err instanceof Error ? err.message : String(err)}`);
     }
+  } catch (err) {
+    console.warn(`[batch] Language targeting failed for ${plan.campaignName}: ${err instanceof Error ? err.message : String(err)}`);
   }
 
-  // Create campaign assets
+  // Campaign assets
   try {
     await createCampaignAssets(agent.googleAds, result.campaignResourceName, {
-      sitelinks: generateEventSitelinks(eventUrl, primaryLang as any),
-      callouts: rec.callouts ?? generateEventCallouts(primaryLang as any, true),
+      sitelinks: generateEventSitelinks(eventUrl, lang as any),
+      callouts: rec.callouts ?? generateEventCallouts(lang as any, true),
       brands: event.brands,
-      promotionText: rec.promotionText ?? `Private Sale ${brand}`,
+      promotionText: rec.promotionText ?? `Private Sale ${plan.brand}`,
       discountPercent: 70,
       finalUrl: eventUrl,
       eventStartDate: event.startDate?.split("T")[0],
       eventEndDate: endDate,
-      language: primaryLang as any,
+      language: lang as any,
       eventType: "physical",
     });
   } catch { /* non-fatal */ }
 
-  // Store ad copy for future RAG
+  // Store ad copy for RAG
   try {
     await storeAdCopy({
-      brand,
+      brand: plan.brand,
       eventType: "physical",
       campaignType: "search",
-      language: "nl",
-      headlines: rec.adCopy.nl.headlines,
-      descriptions: rec.adCopy.nl.descriptions,
+      language: lang,
+      headlines: adCopy.headlines,
+      descriptions: adCopy.descriptions,
       finalUrl: eventUrl,
       path1: rec.path1,
       path2: rec.path2,
-      keywords: rec.keywords,
+      keywords: plan.keywords.map((k) => ({ text: k.text, matchType: k.matchType as any })),
       campaignName: plan.campaignName,
-      eventDates: event.dateTextNl ?? undefined,
+      eventDates: (lang === "fr" ? event.dateTextFr : event.dateTextNl) ?? undefined,
     });
   } catch { /* non-fatal */ }
 
   return {
-    brand,
+    brand: plan.brand,
+    lang,
     campaignName: plan.campaignName,
     resourceName: result.campaignResourceName,
-    adGroups: adGroupCount,
   };
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────
 
 function extractCity(event: EventData): string {
-  // locationText is like "Bleckmann, Schrijberg 189/193, 9111 Sint-Niklaas (Belsele)"
-  // Extract city from postal code pattern: "9111 Sint-Niklaas"
   const loc = event.locationText ?? "";
   const cityMatch = loc.match(/\d{4}\s+([A-Za-zÀ-ÿ-]+)/);
   if (cityMatch) return cityMatch[1];
-  // Fallback: use postalCode area
   if (event.postalCode) return event.postalCode;
   return "Sint-Niklaas";
 }
@@ -518,7 +491,6 @@ async function findExistingCampaigns(
   shortName: string,
 ): Promise<Map<string, string>> {
   const map = new Map<string, string>();
-
   try {
     const query = `
       SELECT campaign.name, campaign.id
@@ -541,7 +513,6 @@ async function findExistingCampaigns(
   } catch (err) {
     console.warn(`[batch] Existing campaign check failed: ${err instanceof Error ? err.message : String(err)}`);
   }
-
   return map;
 }
 
