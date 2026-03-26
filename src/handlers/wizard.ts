@@ -37,6 +37,7 @@ import { storeAdCopy, retrieveSimilarAds, formatAdsForPrompt, extractBrand } fro
 import { searchBrandContext, searchEventContext } from "../tools/brand-knowledge.js";
 import { createRedTrackCampaign, isRedTrackConfigured } from "../tools/redtrack.js";
 import { createCampaignAssets, generateEventSitelinks, generateEventCallouts } from "../tools/asset-builder.js";
+import { enrichKeywords, formatEnrichmentForSlack } from "../tools/keyword-enrichment.js";
 import {
   wizardStartBlocks,
   eventListBlocks,
@@ -122,11 +123,57 @@ async function postBlocksOrText(
   message: RoutedMessage,
   blocks: ReturnType<typeof wizardStartBlocks>,
   fallbackText: string,
+  followUpText?: string,
 ): Promise<WizardResponse> {
   if (isSlackConfigured()) {
-    return postBlocks(message, blocks, fallbackText);
+    const result = await postBlocks(message, blocks, fallbackText);
+    // Post keyword enrichment as a follow-up in the same thread
+    if (followUpText) {
+      await slackPost(message.channel_id, {
+        text: followUpText,
+        thread_ts: message.thread_ts ?? message.ts,
+      });
+    }
+    return result;
   }
-  return reply(message, fallbackText);
+  return reply(message, fallbackText + (followUpText ? "\n\n" + followUpText : ""));
+}
+
+/**
+ * Run keyword enrichment after AI recommendations.
+ * Non-fatal — returns empty string on failure.
+ */
+async function runKeywordEnrichment(
+  agent: GoogleAdsAgent,
+  message: RoutedMessage,
+  recommendations: WizardRecommendations,
+  brand: string,
+): Promise<string> {
+  if (!agent.googleAds || !recommendations.keywords?.length) return "";
+
+  try {
+    const result = await enrichKeywords(
+      agent.googleAds,
+      recommendations.keywords,
+      brand,
+      "both",
+    );
+
+    // Update keywords with enrichment data (add warnings to group field for visibility)
+    for (const enriched of result.enrichedKeywords) {
+      const kw = recommendations.keywords.find(
+        (k) => k.text.toLowerCase() === enriched.text.toLowerCase(),
+      );
+      if (kw && enriched.warning) {
+        kw.group = `${kw.group} ⚠️`;
+      }
+    }
+
+    return formatEnrichmentForSlack(result);
+  } catch (err) {
+    console.warn(`[wizard] Keyword enrichment failed: ${err instanceof Error ? err.message : String(err)}`);
+    return "";
+  }
 }
 
 /**
@@ -716,7 +763,10 @@ async function handleClone(
   session.step = "reviewing";
   sessions.set(key, session);
 
-  return postBlocksOrText(message, recommendationBlocks(recommendations), recommendations.campaignName);
+  // Keyword enrichment: volume, history, negatives, learnings
+  const enrichmentMsg = await runKeywordEnrichment(agent, message, recommendations, cloneBrand);
+
+  return postBlocksOrText(message, recommendationBlocks(recommendations), recommendations.campaignName, enrichmentMsg);
 }
 
 /** Step 2b: Handle user context for fresh campaign creation */
@@ -776,7 +826,10 @@ async function handleContext(
   session.step = "reviewing";
   sessions.set(key, session);
 
-  return postBlocksOrText(message, recommendationBlocks(recommendations), recommendations.campaignName);
+  // Keyword enrichment: volume, history, negatives, learnings
+  const enrichmentMsg = await runKeywordEnrichment(agent, message, recommendations, brand);
+
+  return postBlocksOrText(message, recommendationBlocks(recommendations), recommendations.campaignName, enrichmentMsg);
 }
 
 /** Step 3+: Handle review modifications */
