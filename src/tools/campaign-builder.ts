@@ -6,7 +6,7 @@
  * All mutation payloads must use snake_case (e.g. campaign_budget, not campaignBudget).
  */
 import type { GoogleAdsClient } from "@domien-sev/ads-sdk";
-import type { CampaignConfig, GoogleCampaignType } from "../types.js";
+import type { CampaignConfig, GoogleCampaignType, YouTubeVideoAd } from "../types.js";
 
 interface MutateOperation {
   create?: Record<string, unknown>;
@@ -17,7 +17,9 @@ interface MutateOperation {
 interface BuildResult {
   campaignResourceName: string;
   adGroupResourceName?: string;
+  adGroupResourceNames?: string[];
   assetGroupResourceName?: string;
+  adResourceNames?: string[];
   adWarning?: string;
 }
 
@@ -40,6 +42,8 @@ export async function buildCampaign(
       return buildDisplayCampaign(client, config);
     case "youtube":
       return buildYouTubeCampaign(client, config);
+    case "demand_gen":
+      return buildDemandGenCampaign(client, config);
   }
 }
 
@@ -51,11 +55,14 @@ function channelType(type: GoogleCampaignType): string {
     pmax: "PERFORMANCE_MAX",
     display: "DISPLAY",
     youtube: "VIDEO",
+    demand_gen: "DEMAND_GEN",
   };
   return map[type];
 }
 
-/** Map campaign type to a sensible default bidding strategy */
+/** Map campaign type to a sensible default bidding strategy.
+ *  Default is MANUAL_CPC — avoids overbidding on new campaigns with no conversion data.
+ *  Switch to smart bidding (tROAS/tCPA) only when explicitly configured. */
 function biddingStrategy(config: CampaignConfig): Record<string, unknown> {
   if (config.targetRoas) {
     return { target_roas: { target_roas: config.targetRoas } };
@@ -63,7 +70,11 @@ function biddingStrategy(config: CampaignConfig): Record<string, unknown> {
   if (config.targetCpa) {
     return { target_cpa: { target_cpa_micros: String(Math.round(config.targetCpa * 1_000_000)) } };
   }
-  return { maximize_conversions: {} };
+  // Demand Gen requires smart bidding — manual CPC not supported
+  if (config.type === "demand_gen") {
+    return { maximize_conversions: {} };
+  }
+  return { manual_cpc: { enhanced_cpc_enabled: false } };
 }
 
 async function createBudget(client: GoogleAdsClient, name: string, amountMicros: number): Promise<string> {
@@ -123,12 +134,15 @@ async function createBaseCampaign(
   }
   if (!campaignRn) throw new Error("Failed to create campaign after 5 attempts");
 
-  // Set end date via update if provided
+  // Set end date via update if provided (v23 uses endDateTime + end_date_time mask)
   if (config.endDate) {
     try {
+      const endDateTime = config.endDate.includes(" ")
+        ? config.endDate
+        : `${config.endDate} 23:59:59`;
       await client.mutateResource("campaigns", [{
-        update: { resourceName: campaignRn, endDate: config.endDate.replace(/-/g, "") },
-        updateMask: "end_date",
+        update: { resourceName: campaignRn, endDateTime },
+        updateMask: "end_date_time",
       }]);
     } catch (err) {
       console.warn(`Failed to set end date: ${err instanceof Error ? err.message : String(err)}`);
@@ -358,22 +372,277 @@ async function buildDisplayCampaign(client: GoogleAdsClient, config: CampaignCon
 }
 
 async function buildYouTubeCampaign(client: GoogleAdsClient, config: CampaignConfig): Promise<BuildResult> {
+  const format = config.youtubeAdFormat ?? "action";
+
+  // Map format to channel sub-type and ad group type
+  const formatConfig: Record<string, { subType: string; adGroupType: string }> = {
+    action:   { subType: "VIDEO_ACTION",             adGroupType: "VIDEO_TRUE_VIEW_IN_STREAM" },
+    instream: { subType: "VIDEO_NON_SKIPPABLE_IN_STREAM", adGroupType: "VIDEO_TRUE_VIEW_IN_STREAM" },
+    bumper:   { subType: "VIDEO_NON_SKIPPABLE_IN_STREAM", adGroupType: "VIDEO_BUMPER" },
+    infeed:   { subType: "VIDEO_ACTION",             adGroupType: "VIDEO_TRUE_VIEW_IN_DISPLAY" },
+  };
+  const { subType, adGroupType } = formatConfig[format] ?? formatConfig.action;
+
   const budgetRn = await createBudget(client, config.name, config.dailyBudgetMicros);
   const campaignRn = await createBaseCampaign(client, config, budgetRn, {
-    advertising_channel_sub_type: "VIDEO_ACTION",
+    advertising_channel_sub_type: subType,
   });
 
-  const adGroupResult = await client.mutateResource("adGroups", [{
-    create: {
-      name: config.adGroupName ?? `${config.name} - Video Group`,
-      campaign: campaignRn,
-      type: "VIDEO_TRUE_VIEW_IN_STREAM",
-      status: "ENABLED",
-    },
-  }]);
+  // If no videoAds provided, fall back to single videoId (backward compat)
+  const videoAds: YouTubeVideoAd[] = config.videoAds?.length
+    ? config.videoAds
+    : config.videoId
+      ? [{ videoId: config.videoId, finalUrl: "https://www.shoppingeventvip.be", companionBannerUrl: config.companionBannerUrl }]
+      : [];
+
+  // No videos — create just the shell (ad group only)
+  if (!videoAds.length) {
+    const adGroupResult = await client.mutateResource("adGroups", [{
+      create: {
+        name: config.adGroupName ?? `${config.name} - Video Group`,
+        campaign: campaignRn,
+        type: adGroupType,
+        status: "ENABLED",
+      },
+    }]);
+    return {
+      campaignResourceName: campaignRn,
+      adGroupResourceName: adGroupResult.results[0].resourceName,
+      adWarning: "No video IDs provided — campaign shell created without ads. Add video ads manually.",
+    };
+  }
+
+  const adGroupResourceNames: string[] = [];
+  const adResourceNames: string[] = [];
+  let adWarning: string | undefined;
+
+  for (let i = 0; i < videoAds.length; i++) {
+    const va = videoAds[i];
+    const groupName = va.adGroupName ?? `${config.name} - Video ${i + 1}`;
+
+    // Create ad group per video
+    const adGroupResult = await client.mutateResource("adGroups", [{
+      create: {
+        name: groupName,
+        campaign: campaignRn,
+        type: adGroupType,
+        status: "ENABLED",
+      },
+    }]);
+    const adGroupRn = adGroupResult.results[0].resourceName;
+    adGroupResourceNames.push(adGroupRn);
+
+    // Create the video asset (links YouTube video ID to Google Ads)
+    let videoAssetRn: string;
+    try {
+      const assetResult = await client.mutateResource("assets", [{
+        create: {
+          name: `${groupName} video`,
+          type: "YOUTUBE_VIDEO",
+          youtube_video_asset: {
+            youtube_video_id: va.videoId,
+          },
+        },
+      }]);
+      videoAssetRn = assetResult.results[0].resourceName;
+    } catch (err) {
+      const errMsg = err instanceof Error ? err.message : String(err);
+      console.warn(`[campaign-builder] Video asset creation failed for ${va.videoId}: ${errMsg}`);
+      adWarning = (adWarning ?? "") + `Video ${va.videoId}: asset creation failed — ${errMsg.slice(0, 150)}. `;
+      continue;
+    }
+
+    // Build the video ad based on format
+    try {
+      if (format === "action" || format === "infeed") {
+        // Video Responsive Ad — supports headlines, descriptions, CTA
+        await client.mutateResource("adGroupAds", [{
+          create: {
+            ad_group: adGroupRn,
+            status: "ENABLED",
+            ad: {
+              video_responsive_ad: {
+                headlines: (va.headlines ?? ["Shop Nu"]).map((h) => ({ text: h })),
+                long_headlines: (va.longHeadlines ?? va.headlines ?? ["Ontdek exclusieve deals"]).map((h) => ({ text: h })),
+                descriptions: (va.descriptions ?? ["Topmerken aan outletprijzen"]).map((d) => ({ text: d })),
+                call_to_actions: [{ text: va.callToAction ?? "SHOP_NOW" }],
+                videos: [{ asset: videoAssetRn }],
+                companion_banners: va.companionBannerUrl
+                  ? [{ asset: va.companionBannerUrl }]
+                  : [],
+              },
+              final_urls: [va.finalUrl],
+            },
+          },
+        }]);
+      } else if (format === "bumper") {
+        // Bumper ad — simple in-stream non-skippable (6s)
+        await client.mutateResource("adGroupAds", [{
+          create: {
+            ad_group: adGroupRn,
+            status: "ENABLED",
+            ad: {
+              video_ad: {
+                bumper: { companion_banner: va.companionBannerUrl ? { asset: va.companionBannerUrl } : undefined },
+                video: { asset: videoAssetRn },
+              },
+              final_urls: [va.finalUrl],
+            },
+          },
+        }]);
+      } else {
+        // In-stream skippable
+        await client.mutateResource("adGroupAds", [{
+          create: {
+            ad_group: adGroupRn,
+            status: "ENABLED",
+            ad: {
+              video_ad: {
+                in_stream: { action_button_label: va.callToAction ?? "SHOP_NOW", action_headline: va.headlines?.[0] ?? config.name },
+                video: { asset: videoAssetRn },
+              },
+              final_urls: [va.finalUrl],
+            },
+          },
+        }]);
+      }
+
+      adResourceNames.push(`${adGroupRn}/ad`);
+      console.log(`[campaign-builder] Created video ad for ${va.videoId} in ${groupName}`);
+    } catch (err) {
+      const errMsg = err instanceof Error ? err.message : String(err);
+      console.warn(`[campaign-builder] Video ad creation failed for ${va.videoId}: ${errMsg}`);
+      adWarning = (adWarning ?? "") + `Video ${va.videoId}: ad creation failed — ${errMsg.slice(0, 150)}. `;
+    }
+  }
 
   return {
     campaignResourceName: campaignRn,
-    adGroupResourceName: adGroupResult.results[0].resourceName,
+    adGroupResourceName: adGroupResourceNames[0],
+    adGroupResourceNames,
+    adResourceNames,
+    adWarning,
+  };
+}
+
+/**
+ * Demand Gen campaign — replaces VIDEO_ACTION in API v23+.
+ * Serves on YouTube (in-stream, in-feed, Shorts), Discover, and Gmail.
+ * Requires: video assets, logo image asset, business name.
+ */
+async function buildDemandGenCampaign(client: GoogleAdsClient, config: CampaignConfig): Promise<BuildResult> {
+  const budgetRn = await createBudget(client, config.name, config.dailyBudgetMicros);
+  const campaignRn = await createBaseCampaign(client, config, budgetRn, {
+    contains_eu_political_advertising: "DOES_NOT_CONTAIN_EU_POLITICAL_ADVERTISING",
+  });
+
+  // Collect video ads (same logic as YouTube builder)
+  const videoAds: YouTubeVideoAd[] = config.videoAds?.length
+    ? config.videoAds
+    : config.videoId
+      ? [{ videoId: config.videoId, finalUrl: config.videoAds?.[0]?.finalUrl ?? "https://www.shoppingeventvip.be" }]
+      : [];
+
+  if (!videoAds.length) {
+    // Create shell ad group only
+    const adGroupResult = await client.mutateResource("adGroups", [{
+      create: {
+        name: config.adGroupName ?? `${config.name} - Demand Gen`,
+        campaign: campaignRn,
+        status: "ENABLED",
+      },
+    }]);
+    return {
+      campaignResourceName: campaignRn,
+      adGroupResourceName: adGroupResult.results[0].resourceName,
+      adWarning: "No video IDs provided — campaign shell created without ads. Add video ads manually in Google Ads UI.",
+    };
+  }
+
+  // Create single ad group for all videos (Demand Gen best practice)
+  const adGroupResult = await client.mutateResource("adGroups", [{
+    create: {
+      name: config.adGroupName ?? `${config.name} - All Videos`,
+      campaign: campaignRn,
+      status: "ENABLED",
+    },
+  }]);
+  const adGroupRn = adGroupResult.results[0].resourceName;
+
+  const adResourceNames: string[] = [];
+  let adWarning: string | undefined;
+  const businessName = config.businessName ?? "Shopping Event VIP";
+  const logoAsset = config.logoImageAsset;
+
+  if (!logoAsset) {
+    adWarning = "No logo image asset provided — ads require a logo. Upload one in Google Ads UI or set logoImageAsset in config.";
+    return {
+      campaignResourceName: campaignRn,
+      adGroupResourceName: adGroupRn,
+      adWarning,
+    };
+  }
+
+  for (let i = 0; i < videoAds.length; i++) {
+    const va = videoAds[i];
+
+    // Create video asset
+    let videoAssetRn: string;
+    try {
+      const assetResult = await client.mutateResource("assets", [{
+        create: {
+          name: `${va.adGroupName ?? config.name} video ${i + 1}`,
+          type: "YOUTUBE_VIDEO",
+          youtube_video_asset: { youtube_video_id: va.videoId },
+        },
+      }]);
+      videoAssetRn = assetResult.results[0].resourceName;
+    } catch (err) {
+      const errMsg = err instanceof Error ? err.message : String(err);
+      console.warn(`[campaign-builder] Video asset failed for ${va.videoId}: ${errMsg}`);
+      adWarning = (adWarning ?? "") + `Video ${va.videoId}: asset failed — ${errMsg.slice(0, 150)}. `;
+      continue;
+    }
+
+    // Create Demand Gen video responsive ad
+    try {
+      await client.mutateResource("adGroupAds", [{
+        create: {
+          ad_group: adGroupRn,
+          status: "ENABLED",
+          ad: {
+            demand_gen_video_responsive_ad: {
+              headlines: (va.headlines ?? ["Shop Nu"]).map((h) => ({ text: h })),
+              long_headlines: (va.longHeadlines ?? va.headlines ?? ["Ontdek exclusieve deals"]).map((h) => ({ text: h })),
+              descriptions: (va.descriptions ?? ["Topmerken aan outletprijzen"]).map((d) => ({ text: d })),
+              videos: [{ asset: videoAssetRn }],
+              logo_images: [{ asset: logoAsset }],
+              business_name: { text: businessName },
+            },
+            final_urls: [va.finalUrl],
+            name: va.adGroupName ?? `${config.name} - Video ${i + 1}`,
+          },
+        },
+      }]);
+      adResourceNames.push(`${adGroupRn}/ad-${i}`);
+      console.log(`[campaign-builder] Created Demand Gen ad for ${va.videoId}`);
+    } catch (err) {
+      const errMsg = err instanceof Error ? err.message : String(err);
+      // Extract policy topic if present
+      const policyMatch = errMsg.match(/"topic":\s*"([^"]+)"/);
+      const policyTopic = policyMatch ? policyMatch[1] : null;
+      const detail = policyTopic === "DESTINATION_NOT_WORKING"
+        ? `landing page not reachable (try adding ?ref=yt parameter)`
+        : errMsg.slice(0, 150);
+      console.warn(`[campaign-builder] Demand Gen ad failed for ${va.videoId}: ${detail}`);
+      adWarning = (adWarning ?? "") + `Video ${va.videoId}: ad failed — ${detail}. `;
+    }
+  }
+
+  return {
+    campaignResourceName: campaignRn,
+    adGroupResourceName: adGroupRn,
+    adResourceNames,
+    adWarning,
   };
 }

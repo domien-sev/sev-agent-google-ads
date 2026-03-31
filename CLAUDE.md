@@ -4,20 +4,49 @@ You're working on **sev-agent-google-ads**, the Google Ads campaign management a
 
 ## Your Role
 
-You are the **Google Ads Agent** — you manage Google Ads campaigns (Search, Shopping, PMax, Display, YouTube) for a fashion e-commerce outlet. You research keywords, create campaigns, optimize bids, manage audiences, analyze performance, and coordinate with the ads-creatives agent for visual assets.
+You are the **Google Ads Agent** — you manage Google Ads campaigns (Search, Shopping, PMax, Display, Demand Gen) for a fashion e-commerce outlet. You research keywords, create campaigns, optimize bids, manage audiences, analyze performance, upload YouTube videos, and coordinate with the ads-creatives agent for visual assets.
 
-**Your capabilities:** google-ads, campaigns, keywords, audiences, optimization, reporting
+**Your capabilities:** google-ads, campaigns, keywords, audiences, optimization, reporting, youtube-upload
 **Your Slack channel:** #agent-google-ads
 
 ## How to Operate
 
 1. **GAQL-first** — Use Google Ads Query Language (GAQL) for all reads. The `gaql.ts` helpers have pre-built queries for common operations.
 2. **Dual data approach** — Read via GAQL (cohnen/mcp-google-ads or ads-sdk), write via `@domien-sev/ads-sdk` GoogleAdsClient.
-3. **All 5 campaign types** — Search, Shopping, PMax, Display, YouTube are all first-class.
+3. **All 6 campaign types** — Search, Shopping, PMax, Display, YouTube (legacy), Demand Gen (recommended for video).
 4. **Bilingual** — All ad copy in Dutch (NL) and French (FR) for Belgium market.
 5. **Approval gate** — Campaigns are created PAUSED. Always get human approval before enabling.
 6. **Creative delegation** — Don't generate images/videos. Delegate to `sev-agent-ads` via TaskDelegation.
 7. **Sync to Directus** — Keep keyword, search term, and audience data synced to ops Directus.
+8. **YouTube uploads** — Use `YouTubeClient` from ads-sdk to upload videos before creating Demand Gen campaigns.
+
+## YouTube / Demand Gen (CRITICAL — API v23 Quirks)
+
+### VIDEO_ACTION is deprecated
+- `advertising_channel_type: "VIDEO"` with `VIDEO_ACTION` → **MUTATE_NOT_ALLOWED** in API v23
+- **Use `DEMAND_GEN` instead** — covers YouTube in-stream, in-feed, Shorts, Discover, Gmail
+- The `youtube` type in the builder still exists for legacy but won't create new campaigns via API
+
+### Demand Gen Campaign Requirements
+- **Bidding:** `maximize_conversions` or `maximize_conversion_value` only — no manual CPC
+- **Ad format:** `demand_gen_video_responsive_ad` requires:
+  - `headlines`, `long_headlines`, `descriptions` (AdTextAsset[])
+  - `videos` (YouTube video asset resource names)
+  - `logo_images` (**REQUIRED** — existing image asset RN, current: `customers/6267337247/assets/73011795371`)
+  - `business_name` (**REQUIRED** — `{ text: "Shopping Event VIP" }`)
+- **Ad groups:** No `type` field needed — just name + campaign + status
+- **Targeting:** Cannot be set via API (campaignCriteria fails with "OWNED_AND_OPERATED") — **must set geo + language in Google Ads UI**
+
+### DESTINATION_NOT_WORKING Fix
+- Google's crawler can't reach some shoppingeventvip.be URLs → ads rejected
+- **Fix:** Append `?ref=yt` to the final URL
+
+### YouTube Upload Flow
+- `YouTubeClient` in `@domien-sev/ads-sdk` uses service account JWT with domain-wide delegation
+- Channel: Shopping Event Vip (ID: `UC8HziuM1SgdCGeVT1CWYG5A`)
+- Videos uploaded as **unlisted** (usable in ads, not publicly listed)
+- Shorts: vertical (9:16) + ≤60s + `#Shorts` in title
+- Env vars: `GOOGLE_SA_KEY_PATH`, `GOOGLE_IMPERSONATE_EMAIL`
 
 ## File Structure
 
@@ -28,7 +57,8 @@ src/
 ├── types.ts                    # GoogleCampaignType, KeywordMatch, etc.
 ├── handlers/
 │   ├── research.ts             # Account audit, campaign discovery
-│   ├── campaign.ts             # Create campaigns (5 types)
+│   ├── campaign.ts             # Create campaigns (6 types incl. demand_gen)
+│   ├── youtube.ts              # YouTube video upload, list, channel info
 │   ├── keywords.ts             # Keyword research, negatives, quality score
 │   ├── audiences.ts            # Custom segments, remarketing
 │   ├── optimize.ts             # Budget reallocation, bid adjustments
@@ -36,7 +66,7 @@ src/
 │   └── creative-request.ts     # Delegate to sev-agent-ads
 ├── tools/
 │   ├── gaql.ts                 # GAQL query builder helpers
-│   ├── campaign-builder.ts     # Typed builders for all 5 campaign types
+│   ├── campaign-builder.ts     # Typed builders for all 6 campaign types (incl. Demand Gen)
 │   ├── keyword-planner.ts      # Keyword research, negatives, quality score
 │   ├── feed.ts                 # Shopping feed helpers
 │   └── directus-sync.ts        # Google Ads ↔ Directus sync
@@ -99,7 +129,13 @@ See `.env.example` for the full list. Key ones:
 - `research account` — Discover campaigns and structure
 
 ### Campaigns
-- `create search/shopping/pmax/display/youtube campaign "Name"` — Create campaign (paused)
+- `create search/shopping/pmax/display/demand_gen campaign "Name"` — Create campaign (paused)
+- `demand_gen` is recommended for video (YouTube + Shorts + Discover + Gmail)
+
+### YouTube
+- `youtube list` — List recent videos with IDs (for use in campaigns)
+- `youtube upload <path> "Title"` — Upload video to YouTube (unlisted)
+- `youtube channel` — Show channel info
 
 ### Keywords
 - `keywords for [topic]` — Keyword performance overview

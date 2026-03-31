@@ -3,6 +3,7 @@
  * Uses Google Ads Keyword Planner API for discovery + GAQL for analysis.
  */
 import type { GoogleAdsClient } from "@domien-sev/ads-sdk";
+import { LANGUAGE_CONSTANTS } from "../types.js";
 import type { KeywordMatchType } from "../types.js";
 
 export interface KeywordSuggestion {
@@ -28,7 +29,7 @@ export interface KeywordIdea {
  *
  * @param seedKeywords - Starting keywords to expand from
  * @param pageUrl - Optional landing page URL for contextual suggestions
- * @param language - Language code: "1000" (EN), "1001" (FR), "1043" (NL)
+ * @param language - Language code: "1000" (EN), "1002" (FR), "1010" (NL)
  * @param geoTargets - Geo target constants: "2056" (Belgium)
  */
 export async function researchKeywords(
@@ -41,7 +42,7 @@ export async function researchKeywords(
     limit?: number;
   },
 ): Promise<KeywordIdea[]> {
-  const languageId = params.language ?? "1043"; // Dutch by default
+  const languageId = params.language ?? LANGUAGE_CONSTANTS.nl;
   const geoTargetIds = params.geoTargets ?? ["2056"]; // Belgium
 
   const body: Record<string, unknown> = {
@@ -104,7 +105,7 @@ export async function getKeywordMetrics(
     geoTargets?: string[];
   },
 ): Promise<KeywordIdea[]> {
-  const languageId = params?.language ?? "1043";
+  const languageId = params?.language ?? LANGUAGE_CONSTANTS.nl;
   const geoTargetIds = params?.geoTargets ?? ["2056"];
 
   const body: Record<string, unknown> = {

@@ -11,8 +11,10 @@ import { handleAudiences } from "./handlers/audiences.js";
 import { handleOptimize } from "./handlers/optimize.js";
 import { handleOptimizeRules } from "./handlers/optimize-rules.js";
 import { handleReport } from "./handlers/report.js";
+import { handleAudit } from "./handlers/audit.js";
 import { handleCreativeRequest } from "./handlers/creative-request.js";
 import { handleWizard, isWizardMessage } from "./handlers/wizard.js";
+import { handleYouTube } from "./handlers/youtube.js";
 
 export class GoogleAdsAgent extends BaseAgent {
   public googleAds!: GoogleAdsClient;
@@ -85,8 +87,13 @@ export class GoogleAdsAgent extends BaseAgent {
         return handleWizard(this, message);
       }
 
-      // Research & audit
-      if (text.startsWith("research") || text.startsWith("audit") || text.startsWith("discover")) {
+      // Health audit (74-check scored report)
+      if (text === "audit" || text.startsWith("audit health") || text.startsWith("health audit")) {
+        return handleAudit(this, message);
+      }
+
+      // Research & account discovery
+      if (text.startsWith("research") || text.startsWith("audit ") || text.startsWith("discover")) {
         return handleResearch(this, message);
       }
 
@@ -123,6 +130,11 @@ export class GoogleAdsAgent extends BaseAgent {
       // Reporting
       if (text.startsWith("report") || text.startsWith("performance") || text.startsWith("quality score")) {
         return handleReport(this, message);
+      }
+
+      // YouTube video management
+      if (text.startsWith("youtube") || text.startsWith("yt ")) {
+        return handleYouTube(this, message);
       }
 
       // Creative requests
@@ -183,7 +195,8 @@ export class GoogleAdsAgent extends BaseAgent {
         "---",
         "",
         "*Quick Create (one-shot, no wizard):*",
-        "`create search/shopping/pmax/display/youtube campaign \"Name\"` — Creates with defaults",
+        "`create search/shopping/pmax/display/demand_gen campaign \"Name\"` — Creates with defaults",
+        "  `demand_gen` = YouTube + Shorts + Discover + Gmail (recommended for video)",
         "",
         "*Research & Audit:*",
         "`audit` — Full account health audit with scoring",
@@ -213,6 +226,11 @@ export class GoogleAdsAgent extends BaseAgent {
         "`report daily` / `report weekly` — Performance summary",
         "`performance [campaign]` — Detailed campaign metrics",
         "`quality score` — Quality score distribution",
+        "",
+        "*YouTube:*",
+        "`youtube channel` — Show channel info",
+        "`youtube list` — List recent videos with IDs",
+        '`youtube upload <path> "Title"` — Upload a video for campaigns',
         "",
         "*Creatives:*",
         "`request creatives for [campaign]` — Delegate to ads agent",

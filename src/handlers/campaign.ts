@@ -23,7 +23,7 @@ export async function handleCampaign(
 
   // Parse campaign type and name
   const match = text.match(
-    /create\s+(search|shopping|pmax|display|youtube)\s+campaign\s+["']?(.+?)["']?\s*$/i,
+    /create\s+(search|shopping|pmax|display|youtube|demand[_\s]?gen)\s+campaign\s+["']?(.+?)["']?\s*$/i,
   );
 
   if (!match) {
@@ -35,14 +35,16 @@ export async function handleCampaign(
       "  `shopping` — Product ads from Merchant Center",
       "  `pmax` — Performance Max (all Google channels)",
       "  `display` — Banner ads on Display Network",
-      "  `youtube` — Video ads on YouTube",
+      "  `youtube` — Video ads on YouTube (legacy)",
+      "  `demand_gen` — YouTube + Shorts + Discover + Gmail (recommended for video)",
       "",
       'Example: `create search campaign "Summer Sale BE"`',
     ].join("\n"));
   }
 
   const [, typeStr, campaignName] = match;
-  const campaignType = typeStr.toLowerCase() as GoogleCampaignType;
+  const normalized = typeStr.toLowerCase().replace(/[\s_]?gen/, "_gen").replace("demand_gen", "demand_gen");
+  const campaignType = (normalized.startsWith("demand") ? "demand_gen" : normalized) as GoogleCampaignType;
 
   agent.log.info(`Creating ${campaignType} campaign: "${campaignName}"`);
 
@@ -85,10 +87,15 @@ export async function handleCampaign(
 
     case "youtube":
       config.targetCpa = 15; // €15 CPA target
+      config.youtubeAdFormat = "action"; // Video Action — conversion-focused
       break;
 
     case "display":
       config.displayNetwork = true;
+      break;
+
+    case "demand_gen":
+      config.businessName = "Shopping Event VIP";
       break;
   }
 
@@ -107,11 +114,23 @@ export async function handleCampaign(
       `*Resource:* \`${result.campaignResourceName}\``,
     ];
 
-    if (result.adGroupResourceName) {
+    if (result.adGroupResourceNames?.length) {
+      lines.push(`*Ad Groups:* ${result.adGroupResourceNames.length} created`);
+      for (const rn of result.adGroupResourceNames) {
+        lines.push(`  • \`${rn}\``);
+      }
+    } else if (result.adGroupResourceName) {
       lines.push(`*Ad Group:* \`${result.adGroupResourceName}\``);
+    }
+    if (result.adResourceNames?.length) {
+      lines.push(`*Video Ads:* ${result.adResourceNames.length} created`);
     }
     if (result.assetGroupResourceName) {
       lines.push(`*Asset Group:* \`${result.assetGroupResourceName}\``);
+    }
+
+    if (result.adWarning) {
+      lines.push("", `⚠️ ${result.adWarning}`);
     }
 
     lines.push(
@@ -151,11 +170,36 @@ export async function handleCampaign(
         );
         break;
       case "youtube":
-        lines.push(
-          "  1. `request creatives for [campaign]` — Get video assets",
-          "  2. Set audience targeting",
-          "  3. Enable campaign when ready",
-        );
+        if (result.adResourceNames?.length) {
+          lines.push(
+            `  1. Review ${result.adResourceNames.length} video ad(s) in Google Ads UI`,
+            "  2. Add audience targeting (custom segments, in-market, remarketing)",
+            "  3. Enable campaign when ready",
+          );
+        } else {
+          lines.push(
+            "  1. Add video ads: provide YouTube video IDs + headlines + descriptions",
+            "  2. Add audience targeting (custom segments, in-market, remarketing)",
+            "  3. Enable campaign when ready",
+          );
+        }
+        break;
+      case "demand_gen":
+        if (result.adResourceNames?.length) {
+          lines.push(
+            `  1. Review ${result.adResourceNames.length} video ad(s) in Google Ads UI`,
+            "  2. Set geo + language targeting in Google Ads UI",
+            "  3. Add audience signals (custom segments, in-market, remarketing)",
+            "  4. Enable campaign when ready",
+          );
+        } else {
+          lines.push(
+            "  1. `youtube list` — Find video IDs to use",
+            "  2. Add video ads with logo + headlines in Google Ads UI",
+            "  3. Set geo + language targeting",
+            "  4. Enable campaign when ready",
+          );
+        }
         break;
     }
 
@@ -174,6 +218,7 @@ function formatCampaignType(type: GoogleCampaignType): string {
     pmax: "Performance Max",
     display: "Display",
     youtube: "YouTube",
+    demand_gen: "Demand Gen (YouTube + Shorts + Discover + Gmail)",
   };
   return map[type];
 }

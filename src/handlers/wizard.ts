@@ -56,7 +56,7 @@ import type { EventData } from "../tools/event-source.js";
 type WizardResponse = AgentResponse | DirectPostResponse;
 
 /** Wizard states */
-type WizardStep = "awaiting_type" | "awaiting_event" | "confirming_event" | "awaiting_context" | "analyzing" | "reviewing" | "confirmed" | "created";
+type WizardStep = "awaiting_type" | "awaiting_event" | "confirming_event" | "awaiting_videos" | "awaiting_context" | "analyzing" | "reviewing" | "confirmed" | "created";
 
 interface CreatedCampaign {
   campaignResourceName: string;
@@ -95,6 +95,8 @@ interface WizardState {
   created?: CreatedCampaign;
   pendingAd?: PendingAd;
   createdAt: number;
+  /** YouTube video IDs for Demand Gen campaigns */
+  videoIds?: string[];
 }
 
 /** TTL for wizard sessions (2 hours) */
@@ -263,6 +265,8 @@ export async function handleWizard(
       return handleEventStep(agent, message, existing, key);
     case "confirming_event":
       return handleEventConfirmation(agent, message, existing, key);
+    case "awaiting_videos":
+      return handleVideoIds(agent, message, existing, key);
     case "awaiting_context":
       return handleContext(agent, message, existing, key);
     case "reviewing":
@@ -318,7 +322,7 @@ async function startWizard(
   return postBlocksOrText(
     message,
     wizardStartBlocks(isEventSourceConfigured(), recentCampaigns),
-    "Campaign Creation Wizard — type `search`, `shopping`, `pmax`, `display`, `youtube`, `events`, or `clone [name]`",
+    "Campaign Creation Wizard — type `search`, `shopping`, `pmax`, `display`, `demand_gen`, `youtube`, `events`, or `clone [name]`",
   );
 }
 
@@ -364,14 +368,31 @@ async function handleTypeSelection(
   const typeMap: Record<string, GoogleCampaignType> = {
     search: "search", shopping: "shopping", pmax: "pmax",
     display: "display", youtube: "youtube",
+    demand_gen: "demand_gen", demandgen: "demand_gen", "demand gen": "demand_gen",
   };
 
   const selectedType = typeMap[lower];
   if (!selectedType) {
-    return reply(message, "Pick a type: `search`, `shopping`, `pmax`, `display`, `youtube`, or `clone [name]`");
+    return reply(message, "Pick a type: `search`, `shopping`, `pmax`, `display`, `demand_gen`, `youtube`, or `clone [name]`");
   }
 
   session.campaignType = selectedType;
+
+  // Demand Gen needs video IDs first
+  if (selectedType === "demand_gen") {
+    session.step = "awaiting_videos";
+    sessions.set(key, session);
+    return reply(message, [
+      "*Demand Gen campaign* — YouTube + Shorts + Discover + Gmail",
+      "",
+      "Provide YouTube video IDs (the `v=` part from YouTube URLs).",
+      "You can paste multiple IDs separated by commas or spaces.",
+      "",
+      "Example: `RTUoB2qMR7Y, 4q6xZpBsirY`",
+      "",
+      "Or type `youtube list` to see videos on the channel, or `skip` to add videos later.",
+    ].join("\n"));
+  }
 
   // Go to event selection if event source is configured
   if (isEventSourceConfigured()) {
@@ -398,6 +419,83 @@ async function handleTypeSelection(
     contextPromptBlocks(selectedType),
     `Got it — *${selectedType}* campaign. Tell me about the campaign: brand/product, landing page, and goal.`,
   );
+}
+
+/** Handle video ID collection for Demand Gen campaigns */
+async function handleVideoIds(
+  agent: GoogleAdsAgent,
+  message: RoutedMessage,
+  session: WizardState,
+  key: string,
+): Promise<WizardResponse> {
+  const text = message.text.trim();
+  const lower = text.toLowerCase();
+
+  // List videos from channel
+  if (lower === "youtube list" || lower === "yt list") {
+    const { handleYouTube } = await import("./youtube.js");
+    return handleYouTube(agent, message);
+  }
+
+  // Skip — proceed without videos
+  if (lower === "skip" || lower === "no videos") {
+    session.videoIds = [];
+    // Continue to event or context step
+    if (isEventSourceConfigured()) {
+      session.step = "awaiting_event";
+      sessions.set(key, session);
+      try {
+        const events = await getActiveEvents();
+        if (events.length > 0) {
+          return postBlocksOrText(
+            message,
+            eventListBlocks(events),
+            `*demand_gen* campaign (no videos yet) — select an event or type \`skip\`:`,
+          );
+        }
+      } catch { /* fall through */ }
+    }
+    session.step = "awaiting_context";
+    sessions.set(key, session);
+    return reply(message, "OK, no videos for now. Tell me about the campaign: brand/product, landing page, and goal.");
+  }
+
+  // Parse video IDs — accept comma/space separated, or YouTube URLs
+  const videoIdPattern = /(?:youtube\.com\/watch\?v=|youtu\.be\/)?([a-zA-Z0-9_-]{11})/g;
+  const ids: string[] = [];
+  let match: RegExpExecArray | null;
+  while ((match = videoIdPattern.exec(text)) !== null) {
+    if (!ids.includes(match[1])) ids.push(match[1]);
+  }
+
+  if (!ids.length) {
+    return reply(message, "No valid video IDs found. Paste YouTube video IDs (e.g. `RTUoB2qMR7Y`) or URLs, separated by commas. Or type `skip`.");
+  }
+
+  session.videoIds = ids;
+  sessions.set(key, session);
+
+  const videoList = ids.map((id) => `  • \`${id}\` — https://www.youtube.com/watch?v=${id}`).join("\n");
+
+  // Continue to event or context step
+  if (isEventSourceConfigured()) {
+    session.step = "awaiting_event";
+    sessions.set(key, session);
+    try {
+      const events = await getActiveEvents();
+      if (events.length > 0) {
+        return postBlocksOrText(
+          message,
+          eventListBlocks(events),
+          `*${ids.length} video(s) added:*\n${videoList}\n\nNow select an event or type \`skip\`:`,
+        );
+      }
+    } catch { /* fall through */ }
+  }
+
+  session.step = "awaiting_context";
+  sessions.set(key, session);
+  return reply(message, `*${ids.length} video(s) added:*\n${videoList}\n\nNow tell me about the campaign: brand/product, landing page, and goal.`);
 }
 
 /** Handle event selection step — user picks or searches for an event */
@@ -1126,6 +1224,22 @@ async function confirmAndBuild(
   } else if (type === "shopping") {
     config.merchantId = process.env.GOOGLE_MERCHANT_ID;
     config.feedLabel = "online";
+  } else if (type === "demand_gen") {
+    // Logo asset (reuse existing account logo)
+    config.logoImageAsset = process.env.DEMAND_GEN_LOGO_ASSET ?? "customers/6267337247/assets/73011795371";
+    config.businessName = "Shopping Event VIP";
+    // Wire video IDs collected during wizard
+    if (session.videoIds?.length) {
+      const finalUrl = (rec.finalUrl.includes("?") ? rec.finalUrl : `${rec.finalUrl}?ref=yt`);
+      config.videoAds = session.videoIds.map((videoId, i) => ({
+        videoId,
+        finalUrl,
+        headlines: rec.adCopy.nl?.headlines?.slice(0, 3) ?? ["Shop Nu"],
+        longHeadlines: [rec.adCopy.nl?.headlines?.[0] ?? rec.campaignName],
+        descriptions: rec.adCopy.nl?.descriptions?.slice(0, 2) ?? ["Topmerken aan outletprijzen"],
+        adGroupName: `${rec.campaignName} - Video ${i + 1}`,
+      }));
+    }
   }
 
   if (session.sourceStructure?.bidding.targetRoas) {
@@ -1817,7 +1931,7 @@ async function findCampaignId(agent: GoogleAdsAgent, nameOrId: string): Promise<
 function mapChannelType(type: string): GoogleCampaignType {
   const map: Record<string, GoogleCampaignType> = {
     SEARCH: "search", SHOPPING: "shopping", PERFORMANCE_MAX: "pmax",
-    DISPLAY: "display", VIDEO: "youtube",
+    DISPLAY: "display", VIDEO: "youtube", DEMAND_GEN: "demand_gen",
   };
   return map[type] ?? "search";
 }

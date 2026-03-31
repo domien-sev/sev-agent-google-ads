@@ -1,5 +1,21 @@
 /** Google Ads campaign types */
-export type GoogleCampaignType = "search" | "shopping" | "pmax" | "display" | "youtube";
+export type GoogleCampaignType = "search" | "shopping" | "pmax" | "display" | "youtube" | "demand_gen";
+
+/**
+ * Google Ads language constant IDs — single source of truth.
+ * See: https://developers.google.com/google-ads/api/reference/data/codes-formats#languages
+ */
+export const LANGUAGE_CONSTANTS = {
+  nl: "1010",   // Dutch
+  fr: "1002",   // French
+  en: "1000",   // English
+  de: "1001",   // German
+} as const;
+
+/** Get the languageConstants/ resource string for a language code */
+export function languageConstant(lang: keyof typeof LANGUAGE_CONSTANTS): string {
+  return `languageConstants/${LANGUAGE_CONSTANTS[lang]}`;
+}
 
 /** Keyword match types */
 export type KeywordMatchType = "EXACT" | "PHRASE" | "BROAD";
@@ -172,9 +188,16 @@ export interface CampaignConfig {
   };
   // Display-specific
   displayNetwork?: boolean;
-  // YouTube-specific
+  // YouTube / Demand Gen specific
   videoId?: string;
   companionBannerUrl?: string;
+  videoAds?: YouTubeVideoAd[];
+  /** YouTube ad format — defaults to "action" (Video Action / tCPA) */
+  youtubeAdFormat?: YouTubeAdFormat;
+  /** Logo image asset resource name (required for Demand Gen) */
+  logoImageAsset?: string;
+  /** Business name shown in Demand Gen ads */
+  businessName?: string;
   // Geo targeting
   targetCountry?: string;
   proximityRadius?: number;
@@ -182,4 +205,42 @@ export interface CampaignConfig {
   proximityPostalCode?: string;
   // URL tracking
   trackingUrlTemplate?: string;
+}
+
+/** YouTube ad format types */
+export type YouTubeAdFormat =
+  | "action"          // Video Action (tCPA/tROAS, drive conversions)
+  | "instream"        // Skippable in-stream (awareness/reach)
+  | "bumper"          // 6s non-skippable bumper (reach)
+  | "infeed";         // In-feed / discovery (consideration)
+
+/** YouTube call-to-action types */
+export type YouTubeCallToAction =
+  | "SHOP_NOW"
+  | "LEARN_MORE"
+  | "SIGN_UP"
+  | "GET_OFFER"
+  | "BOOK_NOW"
+  | "APPLY_NOW"
+  | "CONTACT_US"
+  | "VISIT_SITE";
+
+/** A single video ad within a YouTube campaign */
+export interface YouTubeVideoAd {
+  /** YouTube video ID (the ?v= part) */
+  videoId: string;
+  /** Headlines for video responsive ad (max 5, each ≤15 chars for short, ≤90 for long) */
+  headlines?: string[];
+  /** Long headlines (≤90 chars, used in in-feed placements) */
+  longHeadlines?: string[];
+  /** Descriptions (max 5, each ≤90 chars) */
+  descriptions?: string[];
+  /** Landing page URL */
+  finalUrl: string;
+  /** Call-to-action button text */
+  callToAction?: YouTubeCallToAction;
+  /** Optional companion banner image URL (300x60) */
+  companionBannerUrl?: string;
+  /** Optional ad group name override */
+  adGroupName?: string;
 }

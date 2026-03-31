@@ -1,5 +1,6 @@
 import type { RoutedMessage, AgentResponse } from "@domien-sev/shared-types";
 import type { GoogleAdsAgent } from "../agent.js";
+import { LANGUAGE_CONSTANTS } from "../types.js";
 import * as gaql from "../tools/gaql.js";
 import { findNegativeCandidates, addNegativeKeywords, getQualityScoreBreakdown, researchKeywords, formatKeywordIdeas } from "../tools/keyword-planner.js";
 import { syncKeywords, syncSearchTerms } from "../tools/directus-sync.js";
@@ -223,8 +224,8 @@ async function handleKeywordResearch(
   // Check for lang: prefix (nl, fr, en)
   const langMatch = afterCommand.match(/lang:\s*(nl|fr|en)/i);
   if (langMatch) {
-    const langMap: Record<string, string> = { nl: "1043", fr: "1001", en: "1000" };
-    language = langMap[langMatch[1].toLowerCase()];
+    const key = langMatch[1].toLowerCase() as keyof typeof LANGUAGE_CONSTANTS;
+    language = LANGUAGE_CONSTANTS[key];
   }
 
   // Everything else is seed keywords (comma or space separated)

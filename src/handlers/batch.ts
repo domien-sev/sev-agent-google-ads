@@ -74,10 +74,12 @@ interface BatchExecuteResponse {
 
 type BatchResponse = BatchPreviewResponse | BatchExecuteResponse | { ok: false; error: string };
 
+import { languageConstant, LANGUAGE_CONSTANTS } from "../types.js";
+
 // Google Ads language targeting constants
 const LANG_CONSTANTS: Record<string, string> = {
-  nl: "languageConstants/1043",
-  fr: "languageConstants/1001",
+  nl: languageConstant("nl"),
+  fr: languageConstant("fr"),
 };
 
 /**
@@ -260,8 +262,8 @@ async function researchBrandKeywords(
     const seedsFr = [`${brand} outlet`, `${brand} vente privée`, `${brand} soldes`];
 
     const [nlIdeas, frIdeas] = await Promise.allSettled([
-      researchKeywords(agent.googleAds, { seedKeywords: seedsNl, language: "1043", limit: 20 }),
-      researchKeywords(agent.googleAds, { seedKeywords: seedsFr, language: "1001", limit: 15 }),
+      researchKeywords(agent.googleAds, { seedKeywords: seedsNl, language: LANGUAGE_CONSTANTS.nl, limit: 20 }),
+      researchKeywords(agent.googleAds, { seedKeywords: seedsFr, language: LANGUAGE_CONSTANTS.fr, limit: 15 }),
     ]);
 
     const volumeMap = new Map<string, KeywordIdea>();
@@ -335,7 +337,10 @@ async function createLangCampaign(
     ? `https://www.shoppingeventvip.be/fr/event/${slug}`
     : `https://www.shoppingeventvip.be/nl/event/${slug}`;
 
-  const adCopy = rec.adCopy[lang] ?? rec.adCopy.nl;
+  const rawAdCopy = rec.adCopy?.[lang] ?? rec.adCopy?.nl;
+  const adCopy = (rawAdCopy?.headlines?.length >= 3 && rawAdCopy?.descriptions?.length >= 2)
+    ? rawAdCopy
+    : fallbackAdCopy(plan.brand, lang as "nl" | "fr");
   const endDate = event.suggestedCampaignEnd ?? event.endDate?.split("T")[0];
 
   // RedTrack (one per brand+lang)
@@ -428,6 +433,47 @@ async function createLangCampaign(
     lang,
     campaignName: plan.campaignName,
     resourceName: result.campaignResourceName,
+  };
+}
+
+/** Fallback ad copy when AI generation fails or returns incomplete data */
+function fallbackAdCopy(brand: string, lang: "nl" | "fr"): { headlines: string[]; descriptions: string[] } {
+  const b = brand.length > 20 ? brand.substring(0, 20) : brand;
+  if (lang === "fr") {
+    return {
+      headlines: [
+        `${b} Outlet en Ligne`,
+        `Jusqu'à -70% de Remise`,
+        `${b} Vente Privée`,
+        `Shopping Event VIP`,
+        `Offres Exclusives`,
+        `${b} Soldes en Ligne`,
+        `Grandes Marques Petit Prix`,
+        `Achetez Maintenant`,
+      ],
+      descriptions: [
+        `Découvrez ${b} avec des remises jusqu'à 70%. Exclusif chez Shopping Event VIP.`,
+        `Marques premium à prix réduit. Achetez maintenant en ligne.`,
+        `${b} outlet: stock limité, offres exclusives. Ne manquez pas!`,
+      ],
+    };
+  }
+  return {
+    headlines: [
+      `${b} Online Outlet`,
+      `Tot -70% Korting`,
+      `${b} Private Sale`,
+      `Shopping Event VIP`,
+      `Exclusieve Aanbiedingen`,
+      `${b} Sale Online`,
+      `Topmerken Lage Prijzen`,
+      `Nu Online Shoppen`,
+    ],
+    descriptions: [
+      `Ontdek ${b} met kortingen tot 70%. Exclusief bij Shopping Event VIP.`,
+      `Premium merken voor een fractie van de prijs. Shop nu online.`,
+      `${b} outlet: beperkte voorraad, exclusieve deals. Mis het niet!`,
+    ],
   };
 }
 

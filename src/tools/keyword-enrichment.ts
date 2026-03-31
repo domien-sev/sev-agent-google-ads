@@ -1,3 +1,5 @@
+import { LANGUAGE_CONSTANTS } from "../types.js";
+
 /**
  * Keyword enrichment step for the campaign wizard.
  *
@@ -69,7 +71,7 @@ export async function enrichKeywords(
   language: "nl" | "fr" | "both",
 ): Promise<KeywordEnrichmentResult> {
   const keywordTexts = keywords.map((k) => k.text);
-  const langId = language === "fr" ? "1001" : "1043"; // NL default
+  const langId = language === "fr" ? LANGUAGE_CONSTANTS.fr : LANGUAGE_CONSTANTS.nl;
 
   // Run all enrichment in parallel
   const [plannerMetrics, expandedIdeas, history, negatives, learnings] =
