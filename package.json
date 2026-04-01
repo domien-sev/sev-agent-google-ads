@@ -20,7 +20,9 @@
     "@domien-sev/directus-sdk": "*",
     "@domien-sev/redtrack-sdk": "^0.2.0",
     "@domien-sev/shared-types": "*",
+    "dotenv": "^8.2.0",
     "node-cron": "^3.0.3",
+    "node-fetch": "^3.3.2",
     "pg": "^8.13.0"
   },
   "devDependencies": {

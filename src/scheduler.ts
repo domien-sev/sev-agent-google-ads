@@ -25,6 +25,11 @@ let auditTask: cron.ScheduledTask | null = null;
  * 3. Data sync — every 6 hours (SYNC_CRON env var) — keywords, search terms, asset groups → Directus
  */
 export function initScheduler(agent: GoogleAdsAgent): void {
+  if (process.env.PAPERCLIP_SCHEDULING_ENABLED === "true") {
+    console.log("[scheduler] Paperclip scheduling enabled — skipping node-cron (heartbeats are primary)");
+    return;
+  }
+
   initOptimizationCron(agent);
   initAlertsCron(agent);
   initSyncCron(agent);
