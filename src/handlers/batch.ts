@@ -541,7 +541,7 @@ async function findExistingCampaigns(
     const query = `
       SELECT campaign.name, campaign.id
       FROM campaign
-      WHERE campaign.name LIKE '%${datePrefix}%${shortName}%'
+      WHERE campaign.name LIKE '%${datePrefix.replace(/'/g, "\\'")}%${shortName.replace(/'/g, "\\'")}%'
         AND campaign.status != 'REMOVED'
     `.trim();
 

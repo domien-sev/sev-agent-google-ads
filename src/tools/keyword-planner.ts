@@ -194,7 +194,7 @@ export async function findNegativeCandidates(
   const endDate = new Date().toISOString().split("T")[0];
   const startDate = new Date(Date.now() - days * 86_400_000).toISOString().split("T")[0];
 
-  const campaignFilter = campaignId ? `AND campaign.id = ${campaignId}` : "";
+  const campaignFilter = campaignId ? `AND campaign.id = ${campaignId.replace(/[^0-9]/g, "")}` : "";
 
   const query = `
     SELECT

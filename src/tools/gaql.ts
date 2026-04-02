@@ -9,6 +9,26 @@ export interface DateRange {
   endDate: string;
 }
 
+/** Sanitize a campaign/resource ID — must be numeric only */
+function sanitizeId(id: string): string {
+  const clean = id.replace(/[^0-9]/g, "");
+  if (!clean) throw new Error(`Invalid GAQL ID: ${id}`);
+  return clean;
+}
+
+/** Sanitize a date string — must match YYYY-MM-DD */
+function sanitizeDate(date: string): string {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+    throw new Error(`Invalid date format (expected YYYY-MM-DD): ${date}`);
+  }
+  return date;
+}
+
+/** Sanitize a string for use in GAQL LIKE clauses — escape single quotes */
+export function sanitizeGaqlString(value: string): string {
+  return value.replace(/'/g, "\\'").replace(/\\/g, "\\\\");
+}
+
 function last30Days(): DateRange {
   const end = new Date();
   const start = new Date(end.getTime() - 30 * 86_400_000);
@@ -41,7 +61,7 @@ export function campaignOverview(range?: DateRange): string {
       metrics.conversions_value,
       metrics.average_cpc
     FROM campaign
-    WHERE segments.date BETWEEN '${startDate}' AND '${endDate}'
+    WHERE segments.date BETWEEN '${sanitizeDate(startDate)}' AND '${sanitizeDate(endDate)}'
       AND campaign.status != 'REMOVED'
     ORDER BY metrics.cost_micros DESC
   `.trim();
@@ -62,8 +82,8 @@ export function campaignPerformanceByDate(campaignId: string, range?: DateRange)
       metrics.video_views,
       metrics.average_cpc
     FROM campaign
-    WHERE campaign.id = ${campaignId}
-      AND segments.date BETWEEN '${startDate}' AND '${endDate}'
+    WHERE campaign.id = ${sanitizeId(campaignId)}
+      AND segments.date BETWEEN '${sanitizeDate(startDate)}' AND '${sanitizeDate(endDate)}'
     ORDER BY segments.date
   `.trim();
 }
@@ -83,8 +103,8 @@ export function adGroupsForCampaign(campaignId: string, range?: DateRange): stri
       metrics.conversions,
       metrics.conversions_value
     FROM ad_group
-    WHERE campaign.id = ${campaignId}
-      AND segments.date BETWEEN '${startDate}' AND '${endDate}'
+    WHERE campaign.id = ${sanitizeId(campaignId)}
+      AND segments.date BETWEEN '${sanitizeDate(startDate)}' AND '${sanitizeDate(endDate)}'
       AND ad_group.status != 'REMOVED'
     ORDER BY metrics.cost_micros DESC
   `.trim();
@@ -93,7 +113,7 @@ export function adGroupsForCampaign(campaignId: string, range?: DateRange): stri
 /** Keyword performance with quality score components */
 export function keywordPerformance(campaignId?: string, range?: DateRange): string {
   const { startDate, endDate } = range ?? last30Days();
-  const campaignFilter = campaignId ? `AND campaign.id = ${campaignId}` : "";
+  const campaignFilter = campaignId ? `AND campaign.id = ${sanitizeId(campaignId)}` : "";
   return `
     SELECT
       campaign.id,
@@ -116,7 +136,7 @@ export function keywordPerformance(campaignId?: string, range?: DateRange): stri
       metrics.conversions_value,
       metrics.average_cpc
     FROM keyword_view
-    WHERE segments.date BETWEEN '${startDate}' AND '${endDate}'
+    WHERE segments.date BETWEEN '${sanitizeDate(startDate)}' AND '${sanitizeDate(endDate)}'
       ${campaignFilter}
       AND ad_group_criterion.status != 'REMOVED'
     ORDER BY metrics.cost_micros DESC
@@ -126,7 +146,7 @@ export function keywordPerformance(campaignId?: string, range?: DateRange): stri
 /** Search term report */
 export function searchTermReport(campaignId?: string, range?: DateRange): string {
   const { startDate, endDate } = range ?? last30Days();
-  const campaignFilter = campaignId ? `AND campaign.id = ${campaignId}` : "";
+  const campaignFilter = campaignId ? `AND campaign.id = ${sanitizeId(campaignId)}` : "";
   return `
     SELECT
       campaign.id,
@@ -142,7 +162,7 @@ export function searchTermReport(campaignId?: string, range?: DateRange): string
       metrics.conversions,
       metrics.conversions_value
     FROM search_term_view
-    WHERE segments.date BETWEEN '${startDate}' AND '${endDate}'
+    WHERE segments.date BETWEEN '${sanitizeDate(startDate)}' AND '${sanitizeDate(endDate)}'
       ${campaignFilter}
     ORDER BY metrics.impressions DESC
     LIMIT 200
@@ -169,7 +189,7 @@ export function qualityScoreDistribution(): string {
 /** PMax asset group performance */
 export function assetGroupPerformance(campaignId?: string, range?: DateRange): string {
   const { startDate, endDate } = range ?? last30Days();
-  const campaignFilter = campaignId ? `AND campaign.id = ${campaignId}` : "";
+  const campaignFilter = campaignId ? `AND campaign.id = ${sanitizeId(campaignId)}` : "";
   return `
     SELECT
       campaign.id,
@@ -184,7 +204,7 @@ export function assetGroupPerformance(campaignId?: string, range?: DateRange): s
       metrics.conversions,
       metrics.conversions_value
     FROM asset_group
-    WHERE segments.date BETWEEN '${startDate}' AND '${endDate}'
+    WHERE segments.date BETWEEN '${sanitizeDate(startDate)}' AND '${sanitizeDate(endDate)}'
       ${campaignFilter}
       AND asset_group.status != 'REMOVED'
     ORDER BY metrics.conversions_value DESC
@@ -194,7 +214,7 @@ export function assetGroupPerformance(campaignId?: string, range?: DateRange): s
 /** Shopping product performance */
 export function shoppingProductPerformance(campaignId?: string, range?: DateRange): string {
   const { startDate, endDate } = range ?? last30Days();
-  const campaignFilter = campaignId ? `AND campaign.id = ${campaignId}` : "";
+  const campaignFilter = campaignId ? `AND campaign.id = ${sanitizeId(campaignId)}` : "";
   return `
     SELECT
       segments.product_item_id,
@@ -208,7 +228,7 @@ export function shoppingProductPerformance(campaignId?: string, range?: DateRang
       metrics.conversions,
       metrics.conversions_value
     FROM shopping_performance_view
-    WHERE segments.date BETWEEN '${startDate}' AND '${endDate}'
+    WHERE segments.date BETWEEN '${sanitizeDate(startDate)}' AND '${sanitizeDate(endDate)}'
       ${campaignFilter}
     ORDER BY metrics.conversions_value DESC
     LIMIT 100
@@ -247,7 +267,7 @@ export function audiencePerformance(range?: DateRange): string {
       metrics.conversions,
       metrics.conversions_value
     FROM ad_group_audience_view
-    WHERE segments.date BETWEEN '${startDate}' AND '${endDate}'
+    WHERE segments.date BETWEEN '${sanitizeDate(startDate)}' AND '${sanitizeDate(endDate)}'
     ORDER BY metrics.conversions_value DESC
   `.trim();
 }
@@ -268,7 +288,7 @@ export function campaignDetails(campaignId: string): string {
       campaign_budget.amount_micros,
       campaign_budget.delivery_method
     FROM campaign
-    WHERE campaign.id = ${campaignId}
+    WHERE campaign.id = ${sanitizeId(campaignId)}
   `.trim();
 }
 
@@ -284,7 +304,7 @@ export function campaignKeywords(campaignId: string): string {
       ad_group_criterion.quality_info.quality_score,
       ad_group_criterion.effective_cpc_bid_micros
     FROM keyword_view
-    WHERE campaign.id = ${campaignId}
+    WHERE campaign.id = ${sanitizeId(campaignId)}
       AND ad_group_criterion.status != 'REMOVED'
     ORDER BY ad_group_criterion.keyword.text
   `.trim();
@@ -304,7 +324,7 @@ export function campaignAds(campaignId: string): string {
       ad_group_ad.ad.responsive_search_ad.path2,
       ad_group_ad.status
     FROM ad_group_ad
-    WHERE campaign.id = ${campaignId}
+    WHERE campaign.id = ${sanitizeId(campaignId)}
       AND ad_group_ad.ad.type = 'RESPONSIVE_SEARCH_AD'
       AND ad_group_ad.status != 'REMOVED'
   `.trim();
@@ -317,14 +337,14 @@ export function campaignLocations(campaignId: string): string {
       campaign_criterion.location.geo_target_constant,
       campaign_criterion.negative
     FROM campaign_criterion
-    WHERE campaign.id = ${campaignId}
+    WHERE campaign.id = ${sanitizeId(campaignId)}
       AND campaign_criterion.type = 'LOCATION'
   `.trim();
 }
 
 /** Responsive search ad asset performance */
 export function rsaAssetPerformance(campaignId?: string): string {
-  const campaignFilter = campaignId ? `AND campaign.id = ${campaignId}` : "";
+  const campaignFilter = campaignId ? `AND campaign.id = ${sanitizeId(campaignId)}` : "";
   return `
     SELECT
       campaign.name,

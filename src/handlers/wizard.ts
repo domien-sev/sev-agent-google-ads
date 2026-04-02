@@ -1427,7 +1427,7 @@ async function handleManage(
       campaign_budget.amount_micros,
       metrics.impressions, metrics.clicks, metrics.cost_micros
     FROM campaign
-    WHERE campaign.id = ${campaignId}
+    WHERE campaign.id = ${campaignId.replace(/[^0-9]/g, "")}
   `;
 
   let campaignName = target;
@@ -1469,7 +1469,7 @@ async function handleManage(
     const agQuery = `
       SELECT ad_group.resource_name, ad_group.name
       FROM ad_group
-      WHERE campaign.id = ${campaignId} AND ad_group.status != 'REMOVED'
+      WHERE campaign.id = ${campaignId.replace(/[^0-9]/g, "")} AND ad_group.status != 'REMOVED'
     `;
     const agResults = await agent.googleAds.query(agQuery) as Array<{ results?: Array<Record<string, any>> }>;
     for (const batch of agResults) {
@@ -1482,7 +1482,7 @@ async function handleManage(
     const adQuery = `
       SELECT ad_group_ad.ad.id
       FROM ad_group_ad
-      WHERE campaign.id = ${campaignId} AND ad_group_ad.status != 'REMOVED'
+      WHERE campaign.id = ${campaignId.replace(/[^0-9]/g, "")} AND ad_group_ad.status != 'REMOVED'
     `;
     const adResults = await agent.googleAds.query(adQuery) as Array<{ results?: Array<Record<string, any>> }>;
     for (const batch of adResults) {
