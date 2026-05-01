@@ -176,6 +176,13 @@ export interface CampaignConfig {
   // Shopping-specific
   merchantId?: string;
   feedLabel?: string;
+  /** Filter Shopping campaign to specific products by dimension (brand, product_type, custom_label, etc.) */
+  inventoryFilter?: {
+    /** Dimension to filter on */
+    dimension: "brand" | "product_type" | "custom_label_0" | "custom_label_1" | "custom_label_2" | "custom_label_3" | "custom_label_4";
+    /** Values to include (everything else is excluded) */
+    values: string[];
+  };
   // PMax-specific
   assetGroup?: {
     name: string;
@@ -213,6 +220,119 @@ export type YouTubeAdFormat =
   | "instream"        // Skippable in-stream (awareness/reach)
   | "bumper"          // 6s non-skippable bumper (reach)
   | "infeed";         // In-feed / discovery (consideration)
+
+// ---------------------------------------------------------------------------
+// Belvoir content pipeline types
+// ---------------------------------------------------------------------------
+
+/** Belvoir article categories */
+export type BelvoirCategory = "mode" | "schoonheid" | "welzijn" | "verkopen";
+
+/** Article extracted from belvoir.be */
+export interface BelvoirArticle {
+  directus_article_id: string;
+  title_nl: string;
+  title_fr: string;
+  slug: string;
+  url: string;
+  category: BelvoirCategory;
+  featured_image_url: string;
+  body_images: string[];
+  excerpt_nl: string;
+  excerpt_fr: string;
+  body_text: string;
+  tags: string[];
+  brands_mentioned: string[];
+  affiliate_links: Array<{ url: string; brand: string; product?: string }>;
+  date_published: string;
+}
+
+/** Pipeline config per category (stored in Directus belvoir_pipeline_config) */
+export interface BelvoirPipelineConfig {
+  id?: string;
+  category: BelvoirCategory;
+  campaign_types: GoogleCampaignType[];
+  default_daily_budget: number;
+  default_duration_days: number;
+  keyword_strategy: {
+    negative_keywords?: string[];
+    match_preference?: KeywordMatchType;
+  };
+  target_locations: string[];
+  platforms: string[];
+  enabled: boolean;
+}
+
+/** Pipeline status for an article */
+export type BelvoirPipelineStatus =
+  | "new"
+  | "processing"
+  | "campaigns_created"
+  | "active"
+  | "paused"
+  | "completed"
+  | "failed";
+
+/** Belvoir article record in ops Directus */
+export interface BelvoirArticleRecord {
+  id?: string;
+  directus_article_id: string;
+  title_nl: string;
+  title_fr: string;
+  slug: string;
+  url: string;
+  category: BelvoirCategory;
+  featured_image_url: string;
+  excerpt_nl: string;
+  excerpt_fr: string;
+  tags: string[];
+  brands_mentioned: string[];
+  pipeline_status: BelvoirPipelineStatus;
+  pipeline_error: string | null;
+  campaign_ids: string[];
+  creative_ids: string[];
+  total_spend: number;
+  total_revenue: number;
+  roi: number;
+  date_published: string;
+  date_created?: string;
+  date_updated?: string;
+}
+
+/** Request to the article pipeline */
+export interface BelvoirPipelineRequest {
+  articleUrl?: string;
+  articleId?: string;
+  execute?: boolean;
+  budgetOverride?: number;
+  campaignTypesOverride?: GoogleCampaignType[];
+}
+
+/** Generated ad copy for an article */
+export interface ArticleAdCopy {
+  nl: {
+    headlines: string[];
+    descriptions: string[];
+    callouts: string[];
+    path1: string;
+    path2: string;
+  };
+  fr: {
+    headlines: string[];
+    descriptions: string[];
+    callouts: string[];
+    path1: string;
+    path2: string;
+  };
+}
+
+/** Keyword set extracted from an article */
+export interface ArticleKeywordSet {
+  branded: Array<{ text: string; matchType: KeywordMatchType }>;
+  product: Array<{ text: string; matchType: KeywordMatchType }>;
+  intent: Array<{ text: string; matchType: KeywordMatchType }>;
+  category: Array<{ text: string; matchType: KeywordMatchType }>;
+}
 
 /** YouTube call-to-action types */
 export type YouTubeCallToAction =

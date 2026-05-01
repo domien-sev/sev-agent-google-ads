@@ -79,10 +79,16 @@ async function collectAuditData(client: GoogleAdsClient): Promise<AuditData> {
       client.query(gaql.conversionActions()),
       client.query(gaql.keywordPerformance(undefined, range)),
       client.query(`
-        SELECT campaign.name, campaign_criterion.location.geo_target_constant,
+        SELECT campaign.name, campaign_criterion.type,
+          campaign_criterion.location.geo_target_constant,
+          campaign_criterion.proximity.radius,
+          campaign_criterion.proximity.radius_units,
+          campaign_criterion.proximity.geo_point.longitude_in_micro_degrees,
+          campaign_criterion.proximity.geo_point.latitude_in_micro_degrees,
           campaign_criterion.negative
         FROM campaign_criterion
-        WHERE campaign_criterion.type = 'LOCATION' AND campaign.status = 'ENABLED'
+        WHERE campaign_criterion.type IN ('LOCATION', 'PROXIMITY')
+          AND campaign.status = 'ENABLED'
       `),
     ]);
 
@@ -432,8 +438,12 @@ function auditSettings(data: AuditData): CategoryResult {
     detail: `${smartBidding.length}/${enabled.length} (${smartPct.toFixed(0)}%) on smart bidding`,
   });
 
-  // 6.5 Geo targeting exists
-  const campaignsWithGeo = new Set(geoTargets.map((g: any) => g.campaign?.name));
+  // 6.5 Geo targeting exists (positive LOCATION or PROXIMITY)
+  const campaignsWithGeo = new Set(
+    geoTargets
+      .filter((g: any) => g.campaignCriterion?.negative !== true)
+      .map((g: any) => g.campaign?.name)
+  );
   const noGeo = enabled.filter((c: any) => !campaignsWithGeo.has(c.campaign?.name));
   checks.push({
     id: "6.5", name: "All campaigns have geo targeting", severity: "critical",

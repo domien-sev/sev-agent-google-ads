@@ -1,0 +1,360 @@
+[
+  {
+    "keyword": "river woods",
+    "matchType": "BROAD",
+    "language": "NL",
+    "keep": "260411_agent_physical_RiverWoods_SalonVIP_NL",
+    "pause": [
+      {
+        "campaign": "260419_RiverWoods_RiverWoodsExtraDays_NL",
+        "cost": 93.37,
+        "conv": 1,
+        "convValue": 0,
+        "criterionResources": [
+          "customers/6267337247/adGroupCriteria/193365510885~301255281497"
+        ]
+      },
+      {
+        "campaign": "260309_RiverWoods_NL",
+        "cost": 11.9,
+        "conv": 1,
+        "convValue": 0,
+        "criterionResources": [
+          "customers/6267337247/adGroupCriteria/194248659259~319081836"
+        ]
+      }
+    ]
+  },
+  {
+    "keyword": "river woods outlet",
+    "matchType": "EXACT",
+    "language": "NL",
+    "keep": "260419_RiverWoods_RiverWoodsExtraDays_NL",
+    "pause": [
+      {
+        "campaign": "260411_agent_physical_RiverWoods_SalonVIP_NL",
+        "cost": 20.39,
+        "conv": 0,
+        "convValue": 0,
+        "criterionResources": [
+          "customers/6267337247/adGroupCriteria/197497570209~324372664240"
+        ]
+      }
+    ]
+  },
+  {
+    "keyword": "river woods korting",
+    "matchType": "PHRASE",
+    "language": "NL",
+    "keep": "260411_agent_physical_RiverWoods_SalonVIP_NL",
+    "pause": [
+      {
+        "campaign": "260419_RiverWoods_RiverWoodsExtraDays_NL",
+        "cost": 8.46,
+        "conv": 0,
+        "convValue": 0,
+        "criterionResources": [
+          "customers/6267337247/adGroupCriteria/193365510885~353803186446"
+        ]
+      }
+    ]
+  },
+  {
+    "keyword": "river woods solden",
+    "matchType": "PHRASE",
+    "language": "NL",
+    "keep": "260411_agent_physical_RiverWoods_SalonVIP_NL",
+    "pause": [
+      {
+        "campaign": "260419_RiverWoods_RiverWoodsExtraDays_NL",
+        "cost": 0,
+        "conv": 0,
+        "convValue": 0,
+        "criterionResources": [
+          "customers/6267337247/adGroupCriteria/193365510885~2390938368602"
+        ]
+      }
+    ]
+  },
+  {
+    "keyword": "river woods uitverkoop",
+    "matchType": "PHRASE",
+    "language": "NL",
+    "keep": "260419_RiverWoods_RiverWoodsExtraDays_NL",
+    "pause": [
+      {
+        "campaign": "260411_agent_physical_RiverWoods_SalonVIP_NL",
+        "cost": 0,
+        "conv": 0,
+        "convValue": 0,
+        "criterionResources": [
+          "customers/6267337247/adGroupCriteria/197497570209~353803186966"
+        ]
+      }
+    ]
+  },
+  {
+    "keyword": "herenjack sale",
+    "matchType": "PHRASE",
+    "language": "NL",
+    "keep": "260411_agent_physical_Jeff_SalonVIP_NL",
+    "pause": [
+      {
+        "campaign": "260411_agent_physical_LyleScott_SalonVIP_NL",
+        "cost": 0,
+        "conv": 0,
+        "convValue": 0,
+        "criterionResources": [
+          "customers/6267337247/adGroupCriteria/195220964856~2482211499292"
+        ]
+      }
+    ]
+  },
+  {
+    "keyword": "blazer femme soldes",
+    "matchType": "PHRASE",
+    "language": "FR",
+    "keep": "260318_agent_ecom_Gigue_CerrutiGigueScapa_FR",
+    "pause": [
+      {
+        "campaign": "260411_agent_physical_AmlieAmlie_SalonVIP_FR",
+        "cost": 0,
+        "conv": 0,
+        "convValue": 0,
+        "criterionResources": [
+          "customers/6267337247/adGroupCriteria/200435004611~894013688597"
+        ]
+      }
+    ]
+  },
+  {
+    "keyword": "jbc",
+    "matchType": "EXACT",
+    "language": "NL",
+    "keep": "Gigue - Shopping Collections Campaign Dutch BE",
+    "pause": [
+      {
+        "campaign": "Mayerline - Shopping Collections Campaign Dutch BE",
+        "cost": 0,
+        "conv": 0,
+        "convValue": 0,
+        "criterionResources": [
+          "customers/6267337247/adGroupCriteria/194340985827~552768607"
+        ]
+      }
+    ]
+  },
+  {
+    "keyword": "amelie amelie",
+    "matchType": "EXACT",
+    "language": "NL",
+    "keep": "Gigue - Shopping Collections Campaign Dutch BE",
+    "pause": [
+      {
+        "campaign": "Mayerline - Shopping Collections Campaign Dutch BE",
+        "cost": 0,
+        "conv": 0,
+        "convValue": 0,
+        "criterionResources": [
+          "customers/6267337247/adGroupCriteria/194340985827~342037038364"
+        ]
+      }
+    ]
+  },
+  {
+    "keyword": "veepee",
+    "matchType": "EXACT",
+    "language": "NL",
+    "keep": "Gigue - Shopping Collections Campaign Dutch BE",
+    "pause": [
+      {
+        "campaign": "Mayerline - Shopping Collections Campaign Dutch BE",
+        "cost": 0,
+        "conv": 0,
+        "convValue": 0,
+        "criterionResources": [
+          "customers/6267337247/adGroupCriteria/194340985827~586201324529"
+        ]
+      }
+    ]
+  },
+  {
+    "keyword": "wijde broek dames sale",
+    "matchType": "PHRASE",
+    "language": "NL",
+    "keep": "260411_agent_physical_Xandres_SalonVIP_NL",
+    "pause": [
+      {
+        "campaign": "260320_agent_ecom_HamptonBays_HamptonBays_NL",
+        "cost": 0,
+        "conv": 0,
+        "convValue": 0,
+        "criterionResources": [
+          "customers/6267337247/adGroupCriteria/194840237277~2479529994184"
+        ]
+      }
+    ]
+  },
+  {
+    "keyword": "zomerjas heren sale",
+    "matchType": "PHRASE",
+    "language": "NL",
+    "keep": "260419_RiverWoods_RiverWoodsExtraDays_NL",
+    "pause": [
+      {
+        "campaign": "260411_agent_physical_RiverWoods_SalonVIP_NL",
+        "cost": 0,
+        "conv": 0,
+        "convValue": 0,
+        "criterionResources": [
+          "customers/6267337247/adGroupCriteria/197497570209~311613620575"
+        ]
+      }
+    ]
+  },
+  {
+    "keyword": "dames pullover korting",
+    "matchType": "PHRASE",
+    "language": "NL",
+    "keep": "260419_RiverWoods_RiverWoodsExtraDays_NL",
+    "pause": [
+      {
+        "campaign": "260411_agent_physical_RiverWoods_SalonVIP_NL",
+        "cost": 0,
+        "conv": 0,
+        "convValue": 0,
+        "criterionResources": [
+          "customers/6267337247/adGroupCriteria/197497570209~313666733491"
+        ]
+      }
+    ]
+  },
+  {
+    "keyword": "kinderkledij outlet",
+    "matchType": "PHRASE",
+    "language": "NL",
+    "keep": "260419_RiverWoods_RiverWoodsExtraDays_NL",
+    "pause": [
+      {
+        "campaign": "260411_agent_physical_RiverWoods_SalonVIP_NL",
+        "cost": 0,
+        "conv": 0,
+        "convValue": 0,
+        "criterionResources": [
+          "customers/6267337247/adGroupCriteria/197497570209~367745544694"
+        ]
+      }
+    ]
+  },
+  {
+    "keyword": "herentrui sale",
+    "matchType": "PHRASE",
+    "language": "NL",
+    "keep": "260419_RiverWoods_RiverWoodsExtraDays_NL",
+    "pause": [
+      {
+        "campaign": "260411_agent_physical_RiverWoods_SalonVIP_NL",
+        "cost": 0,
+        "conv": 0,
+        "convValue": 0,
+        "criterionResources": [
+          "customers/6267337247/adGroupCriteria/197497570209~469458427407"
+        ]
+      }
+    ]
+  },
+  {
+    "keyword": "casual overhemd outlet",
+    "matchType": "PHRASE",
+    "language": "NL",
+    "keep": "260419_RiverWoods_RiverWoodsExtraDays_NL",
+    "pause": [
+      {
+        "campaign": "260411_agent_physical_RiverWoods_SalonVIP_NL",
+        "cost": 0,
+        "conv": 0,
+        "convValue": 0,
+        "criterionResources": [
+          "customers/6267337247/adGroupCriteria/197497570209~474209829274"
+        ]
+      }
+    ]
+  },
+  {
+    "keyword": "chino broek korting",
+    "matchType": "PHRASE",
+    "language": "NL",
+    "keep": "260419_RiverWoods_RiverWoodsExtraDays_NL",
+    "pause": [
+      {
+        "campaign": "260411_agent_physical_RiverWoods_SalonVIP_NL",
+        "cost": 0,
+        "conv": 0,
+        "convValue": 0,
+        "criterionResources": [
+          "customers/6267337247/adGroupCriteria/197497570209~1411732380668"
+        ]
+      }
+    ]
+  },
+  {
+    "keyword": "river woods private sale",
+    "matchType": "EXACT",
+    "language": "NL",
+    "keep": "260419_RiverWoods_RiverWoodsExtraDays_NL",
+    "pause": [
+      {
+        "campaign": "260411_agent_physical_RiverWoods_SalonVIP_NL",
+        "cost": 0,
+        "conv": 0,
+        "convValue": 0,
+        "criterionResources": [
+          "customers/6267337247/adGroupCriteria/197497570209~2473797200627"
+        ]
+      }
+    ]
+  },
+  {
+    "keyword": "polo heren outlet",
+    "matchType": "PHRASE",
+    "language": "NL",
+    "keep": "260419_RiverWoods_RiverWoodsExtraDays_NL",
+    "pause": [
+      {
+        "campaign": "260411_agent_physical_LyleScott_SalonVIP_NL",
+        "cost": 0,
+        "conv": 0,
+        "convValue": 0,
+        "criterionResources": [
+          "customers/6267337247/adGroupCriteria/195220964856~2476726623799"
+        ]
+      },
+      {
+        "campaign": "260411_agent_physical_RiverWoods_SalonVIP_NL",
+        "cost": 0,
+        "conv": 0,
+        "convValue": 0,
+        "criterionResources": [
+          "customers/6267337247/adGroupCriteria/197497570209~2476726623799"
+        ]
+      }
+    ]
+  },
+  {
+    "keyword": "boots heren sale",
+    "matchType": "PHRASE",
+    "language": "NL",
+    "keep": "260326_agent_ecom_Timberland_Timberland_NL",
+    "pause": [
+      {
+        "campaign": "260411_agent_physical_CycleurdeLuxe_SalonVIP_NL",
+        "cost": 0,
+        "conv": 0,
+        "convValue": 0,
+        "criterionResources": [
+          "customers/6267337247/adGroupCriteria/196226553113~315060205863"
+        ]
+      }
+    ]
+  }
+]

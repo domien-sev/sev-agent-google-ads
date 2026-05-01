@@ -15,6 +15,10 @@ import { handleAudit } from "./handlers/audit.js";
 import { handleCreativeRequest } from "./handlers/creative-request.js";
 import { handleWizard, isWizardMessage } from "./handlers/wizard.js";
 import { handleYouTube } from "./handlers/youtube.js";
+import { handleBelvoirPipeline, formatPipelineResult } from "./handlers/belvoir-pipeline.js";
+import { handleBelvoirStatus } from "./handlers/belvoir-status.js";
+import { handleBelvoirOptimize } from "./handlers/belvoir-optimize.js";
+import { handleBelvoirDemandGen, formatBelvoirDemandGenResult } from "./handlers/belvoir-demand-gen.js";
 
 export class GoogleAdsAgent extends BaseAgent {
   public googleAds!: GoogleAdsClient;
@@ -135,6 +139,47 @@ export class GoogleAdsAgent extends BaseAgent {
       // YouTube video management
       if (text.startsWith("youtube") || text.startsWith("yt ")) {
         return handleYouTube(this, message);
+      }
+
+      // Belvoir content pipeline
+      if (text.startsWith("belvoir")) {
+        const belvoirCmd = text.replace(/^belvoir\s*/, "").trim();
+        if (belvoirCmd.startsWith("demand-gen") || belvoirCmd.startsWith("demandgen") || belvoirCmd.startsWith("dg")) {
+          const limitMatch = belvoirCmd.match(/--limit[=\s]+(\d+)/);
+          const catMatch = belvoirCmd.match(/--category[=\s]+([a-z0-9-]+)/);
+          const budgetMatch = belvoirCmd.match(/--budget[=\s]+(\d+(?:\.\d+)?)/);
+          const result = await handleBelvoirDemandGen(this, {
+            mode: belvoirCmd.includes("--execute") ? "execute" : "preview",
+            lang: "nl",
+            limit: limitMatch ? parseInt(limitMatch[1], 10) : undefined,
+            category: catMatch?.[1],
+            budgetOverride: budgetMatch ? parseFloat(budgetMatch[1]) : undefined,
+          });
+          return reply(message, formatBelvoirDemandGenResult(result));
+        }
+        if (belvoirCmd.startsWith("article") || belvoirCmd.startsWith("pipeline")) {
+          const urlMatch = belvoirCmd.match(/https?:\/\/[^\s]+/);
+          const result = await handleBelvoirPipeline(this, {
+            articleUrl: urlMatch?.[0],
+            execute: belvoirCmd.includes("--execute"),
+          });
+          return reply(message, formatPipelineResult(result));
+        }
+        if (belvoirCmd.startsWith("status") || belvoirCmd.startsWith("report")) {
+          return handleBelvoirStatus(this, message);
+        }
+        if (belvoirCmd.startsWith("optimize") || belvoirCmd.startsWith("optimi")) {
+          return handleBelvoirOptimize(this, message);
+        }
+        return reply(message, [
+          "*Belvoir Commands:*",
+          "`belvoir demand-gen` — Preview NL Demand Gen campaigns for ALL articles (one per category)",
+          "`belvoir demand-gen --execute` — Create campaigns (PAUSED) + RedTrack tracking",
+          "`belvoir demand-gen --category mode --limit 3` — Test on a single category, 3 articles max",
+          "`belvoir article <url>` — Per-article Search/PMax pipeline (legacy)",
+          "`belvoir status` — Show pipeline status and ROI per article",
+          "`belvoir optimize` — Run content optimization rules",
+        ].join("\n"));
       }
 
       // Creative requests

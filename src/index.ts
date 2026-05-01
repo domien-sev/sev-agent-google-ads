@@ -3,6 +3,8 @@ import { GoogleAdsAgent } from "./agent.js";
 import { loadConfig, createHealthEndpoint, createHeartbeatEndpoint } from "@domien-sev/agent-sdk";
 import { initScheduler, stopScheduler, runOptimizationCycleHttp, runDailyAlerts, runDataSync, runPerfSync, runWeeklyAudit } from "./scheduler.js";
 import { handleBatchCampaigns } from "./handlers/batch.js";
+import { handleBelvoirPipeline } from "./handlers/belvoir-pipeline.js";
+import { handleBelvoirDemandGen } from "./handlers/belvoir-demand-gen.js";
 import { runAudit } from "./handlers/audit.js";
 const PORT = parseInt(process.env.PORT ?? process.env.AGENT_PORT ?? "3000", 10);
 
@@ -84,6 +86,40 @@ async function main() {
       } catch (err) {
         const errMsg = err instanceof Error ? err.message : String(err);
         console.error("Batch campaigns error:", errMsg);
+        res.writeHead(500, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ ok: false, error: errMsg }));
+      }
+      return;
+    }
+
+    // Belvoir article pipeline — webhook trigger + manual
+    if ((req.url === "/article-pipeline" || req.url === "/article-pipeline/manual") && req.method === "POST") {
+      try {
+        const body = await readBody(req);
+        const request = JSON.parse(body);
+        const result = await handleBelvoirPipeline(agent, request);
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify(result));
+      } catch (err) {
+        const errMsg = err instanceof Error ? err.message : String(err);
+        console.error("Article pipeline error:", errMsg);
+        res.writeHead(500, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ ok: false, error: errMsg }));
+      }
+      return;
+    }
+
+    // Belvoir Demand Gen pipeline — one DG campaign per category, one ad group per article
+    if (req.url === "/belvoir-demand-gen" && req.method === "POST") {
+      try {
+        const body = await readBody(req);
+        const request = body ? JSON.parse(body) : {};
+        const result = await handleBelvoirDemandGen(agent, request);
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify(result));
+      } catch (err) {
+        const errMsg = err instanceof Error ? err.message : String(err);
+        console.error("Belvoir DG pipeline error:", errMsg);
         res.writeHead(500, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ ok: false, error: errMsg }));
       }

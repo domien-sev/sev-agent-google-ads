@@ -103,6 +103,14 @@ export async function handleBatchCampaigns(
     return { ok: false, error: `Event not found: ${request.eventId}` };
   }
 
+  // Block campaign creation for expired events
+  if (event.endDate) {
+    const expiration = new Date(event.endDate);
+    if (expiration < new Date()) {
+      return { ok: false, error: `Event "${event.titleNl || event.titleFr}" expired on ${event.endDate.split("T")[0]}` };
+    }
+  }
+
   const brands = request.brands ?? event.brands ?? [];
   if (brands.length === 0) {
     return { ok: false, error: "No brands found for this event" };
@@ -334,9 +342,19 @@ async function createLangCampaign(
 ): Promise<{ brand: string; lang: string; campaignName: string; resourceName: string }> {
   const lang = plan.lang;
   const slug = (event as any).slug ?? "le-salon-vip";
-  const eventUrl = lang === "fr"
-    ? `https://www.shoppingeventvip.be/fr/event/${slug}`
-    : `https://www.shoppingeventvip.be/nl/event/${slug}`;
+
+  // For online/ecom events, use the shop URL from Directus (with /fr/ prefix for FR)
+  let eventUrl: string;
+  if (event.type === "online" && event.url) {
+    const shopUrl = event.url.replace(/^http:/, "https:");
+    eventUrl = lang === "fr"
+      ? shopUrl.replace(/shoppingeventvip\.com\/collections\//, "shoppingeventvip.com/fr/collections/")
+      : shopUrl;
+  } else {
+    eventUrl = lang === "fr"
+      ? `https://www.shoppingeventvip.be/fr/event/${slug}`
+      : `https://www.shoppingeventvip.be/nl/event/${slug}`;
+  }
 
   const rawAdCopy = rec.adCopy?.[lang] ?? rec.adCopy?.nl;
   const adCopy = (rawAdCopy?.headlines?.length >= 3 && rawAdCopy?.descriptions?.length >= 2)
@@ -345,10 +363,11 @@ async function createLangCampaign(
   const endDate = event.suggestedCampaignEnd ?? event.endDate?.split("T")[0];
 
   // RedTrack (one per brand+lang)
+  const isOnline = event.type === "online";
   let trackingTemplate: string | undefined;
   if (isRedTrackConfigured()) {
     try {
-      const rt = await createRedTrackCampaign({ brand: plan.brand, eventType: "physical", landingPageUrl: eventUrl });
+      const rt = await createRedTrackCampaign({ brand: plan.brand, eventType: isOnline ? "online" : "physical", landingPageUrl: eventUrl });
       if (rt) trackingTemplate = rt.trackingTemplate;
     } catch { /* non-fatal */ }
   }
@@ -362,9 +381,13 @@ async function createLangCampaign(
     startDate: new Date().toISOString().split("T")[0],
     ...(endDate && { endDate }),
     targetCountry: "BE",
-    proximityRadius: radius,
-    proximityAddress: event.locationText ?? "Schrijberg 189/193, Sint-Niklaas",
-    proximityPostalCode: event.postalCode ?? "9111",
+    // Online/ecom: country-level Belgium targeting (no proximity radius)
+    // Physical: proximity radius around event venue
+    ...(isOnline ? {} : {
+      proximityRadius: radius,
+      proximityAddress: event.locationText ?? "Schrijberg 189/193, Sint-Niklaas",
+      proximityPostalCode: event.postalCode ?? "9111",
+    }),
     keywords: plan.keywords.map((k) => ({ text: k.text, matchType: k.matchType as any })),
     adGroupName: `${plan.campaignName}`,
     responsiveSearchAd: {
@@ -379,6 +402,20 @@ async function createLangCampaign(
 
   // Build campaign
   const result = await buildCampaign(agent.googleAds, config);
+
+  if (result.adWarning) {
+    console.warn(`[batch] Ad warning for ${plan.campaignName}: ${result.adWarning}`);
+  }
+
+  // Apply "Claude Code" label
+  try {
+    const labelRn = await getOrCreateClaudeCodeLabel(agent);
+    if (labelRn) {
+      await agent.googleAds.mutateResource("campaignLabels", [{
+        create: { campaign: result.campaignResourceName, label: labelRn },
+      }]);
+    }
+  } catch { /* non-fatal */ }
 
   // Set language targeting via campaign criterion
   try {
@@ -476,6 +513,29 @@ function fallbackAdCopy(brand: string, lang: "nl" | "fr"): { headlines: string[]
       `${b} outlet: beperkte voorraad, exclusieve deals. Mis het niet!`,
     ],
   };
+}
+
+// ── Label ──────────────────────────────────────────────────────────
+
+let cachedLabelRn: string | null = null;
+
+async function getOrCreateClaudeCodeLabel(agent: GoogleAdsAgent): Promise<string | null> {
+  if (cachedLabelRn) return cachedLabelRn;
+  try {
+    const existing = await agent.googleAds.query(
+      `SELECT label.resource_name FROM label WHERE label.name = 'Claude Code'`,
+    ) as Array<{ results?: Array<Record<string, any>> }>;
+    const found = existing[0]?.results?.[0]?.label?.resourceName;
+    if (found) { cachedLabelRn = found; return found; }
+
+    const result = await agent.googleAds.mutateResource("labels", [{
+      create: { name: "Claude Code", text_label: { background_color: "#7C3AED", description: "Created via Claude Code / VS Code" } },
+    }]);
+    cachedLabelRn = result.results[0].resourceName;
+    return cachedLabelRn;
+  } catch {
+    return null;
+  }
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────

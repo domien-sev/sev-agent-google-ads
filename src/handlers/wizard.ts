@@ -1585,9 +1585,11 @@ async function handlePostCreation(
     const newBudgetMicros = Math.round(Number(budgetMatch[1]) * 1_000_000);
     try {
       // Get budget resource name from campaign
+      const safeResourceName = String(created.campaignResourceName ?? "").replace(/[^a-zA-Z0-9_/]/g, "");
+      if (!safeResourceName) throw new Error("Invalid campaignResourceName");
       const campaignData = await agent.googleAds.query(`
         SELECT campaign.campaign_budget FROM campaign
-        WHERE campaign.resource_name = '${created.campaignResourceName}'
+        WHERE campaign.resource_name = '${safeResourceName}'
       `) as Array<{ results?: Array<Record<string, any>> }>;
 
       let budgetRn: string | null = null;
@@ -1907,10 +1909,12 @@ function formatAdPreview(ad: PendingAd): string {
 async function findCampaignId(agent: GoogleAdsAgent, nameOrId: string): Promise<string | null> {
   if (/^\d+$/.test(nameOrId)) return nameOrId;
 
+  const safeName = nameOrId.replace(/[^\p{L}\p{N}\s\-_.]/gu, "").slice(0, 100);
+  if (!safeName) return null;
   const query = `
     SELECT campaign.id, campaign.name
     FROM campaign
-    WHERE campaign.name LIKE '%${nameOrId.replace(/'/g, "\\'")}%'
+    WHERE campaign.name LIKE '%${safeName}%'
       AND campaign.status != 'REMOVED'
     LIMIT 5
   `;

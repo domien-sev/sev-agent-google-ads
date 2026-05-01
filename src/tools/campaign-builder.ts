@@ -70,8 +70,8 @@ function biddingStrategy(config: CampaignConfig): Record<string, unknown> {
   if (config.targetCpa) {
     return { target_cpa: { target_cpa_micros: String(Math.round(config.targetCpa * 1_000_000)) } };
   }
-  // Demand Gen requires smart bidding — manual CPC not supported
-  if (config.type === "demand_gen") {
+  // Demand Gen and PMax require smart bidding — manual CPC not supported
+  if (config.type === "demand_gen" || config.type === "pmax") {
     return { maximize_conversions: {} };
   }
   return { manual_cpc: { enhanced_cpc_enabled: false } };
@@ -252,31 +252,51 @@ async function buildSearchCampaign(client: GoogleAdsClient, config: CampaignConf
   let adWarning: string | undefined;
   if (config.responsiveSearchAd) {
     const rsa = config.responsiveSearchAd;
-    try {
-      await client.mutateResource("adGroupAds", [{
-        create: {
-          ad_group: adGroupRn,
-          status: "ENABLED",
-          ad: {
-            responsive_search_ad: {
-              headlines: rsa.headlines.map((h) => ({ text: h })),
-              descriptions: rsa.descriptions.map((d) => ({ text: d })),
-              path1: rsa.path1,
-              path2: rsa.path2,
+
+    // Validate and truncate headlines (max 30 chars) and descriptions (max 90 chars)
+    const validHeadlines = rsa.headlines
+      .map((h) => h.length > 30 ? h.substring(0, 30) : h)
+      .filter((h) => h.length >= 1)
+      .slice(0, 15);
+    const validDescriptions = rsa.descriptions
+      .map((d) => d.length > 90 ? d.substring(0, 90) : d)
+      .filter((d) => d.length >= 1)
+      .slice(0, 4);
+
+    if (validHeadlines.length < 3 || validDescriptions.length < 2) {
+      adWarning = `Ad skipped: need ≥3 headlines and ≥2 descriptions, got ${validHeadlines.length}h/${validDescriptions.length}d.`;
+      console.warn(`[campaign-builder] ${adWarning}`);
+    } else {
+      // Deduplicate headlines and descriptions (Google rejects duplicates)
+      const uniqueHeadlines = [...new Set(validHeadlines)];
+      const uniqueDescriptions = [...new Set(validDescriptions)];
+
+      try {
+        await client.mutateResource("adGroupAds", [{
+          create: {
+            ad_group: adGroupRn,
+            status: "ENABLED",
+            ad: {
+              responsive_search_ad: {
+                headlines: uniqueHeadlines.map((h) => ({ text: h })),
+                descriptions: uniqueDescriptions.map((d) => ({ text: d })),
+                path1: rsa.path1?.substring(0, 15),
+                path2: rsa.path2?.substring(0, 15),
+              },
+              final_urls: [rsa.finalUrl],
             },
-            final_urls: [rsa.finalUrl],
           },
-        },
-      }]);
-    } catch (err) {
-      const errMsg = err instanceof Error ? err.message : String(err);
-      // Extract policy topic if present
-      const policyMatch = errMsg.match(/"topic":\s*"([^"]+)"/);
-      const policyTopic = policyMatch ? policyMatch[1] : null;
-      adWarning = policyTopic === "DESTINATION_NOT_WORKING"
-        ? `Ad rejected: landing page ${rsa.finalUrl} is not reachable. Add a working URL in Google Ads.`
-        : `Ad creation failed: ${policyTopic ?? errMsg.slice(0, 200)}. Add ads manually in Google Ads.`;
-      console.warn(`[campaign-builder] Ad creation failed (non-fatal): ${errMsg}`);
+        }]);
+      } catch (err) {
+        const errMsg = err instanceof Error ? err.message : String(err);
+        // Extract policy topic if present
+        const policyMatch = errMsg.match(/"topic":\s*"([^"]+)"/);
+        const policyTopic = policyMatch ? policyMatch[1] : null;
+        adWarning = policyTopic === "DESTINATION_NOT_WORKING"
+          ? `Ad rejected: landing page ${rsa.finalUrl} is not reachable. Add a working URL in Google Ads.`
+          : `Ad creation failed: ${policyTopic ?? errMsg.slice(0, 200)}. Add ads manually in Google Ads.`;
+        console.warn(`[campaign-builder] Ad creation failed (non-fatal): ${errMsg}`);
+      }
     }
   }
 
@@ -287,9 +307,9 @@ async function buildShoppingCampaign(client: GoogleAdsClient, config: CampaignCo
   const budgetRn = await createBudget(client, config.name, config.dailyBudgetMicros);
   const campaignRn = await createBaseCampaign(client, config, budgetRn, {
     shopping_setting: {
-      merchant_id: config.merchantId ? String(config.merchantId) : undefined,
-      feed_label: config.feedLabel,
-      sales_country: config.locations[0] ?? "BE",
+      merchant_id: config.merchantId ? Number(config.merchantId) : undefined,
+      feed_label: config.feedLabel ?? "BE",
+      campaign_priority: 0,
     },
   });
 
@@ -302,17 +322,232 @@ async function buildShoppingCampaign(client: GoogleAdsClient, config: CampaignCo
       status: "ENABLED",
     },
   }]);
+  const adGroupRn = adGroupResult.results[0].resourceName;
+
+  // Apply inventory filter via listing group tree if specified
+  if (config.inventoryFilter) {
+    await createListingGroupFilter(client, adGroupRn, config.inventoryFilter);
+  }
 
   return {
     campaignResourceName: campaignRn,
-    adGroupResourceName: adGroupResult.results[0].resourceName,
+    adGroupResourceName: adGroupRn,
   };
+}
+
+/**
+ * Create a listing group tree that filters to specific product values.
+ * Builds: Root (SUBDIVISION) → included UNIT(s) per value + excluded "everything else" UNIT.
+ */
+async function createListingGroupFilter(
+  client: GoogleAdsClient,
+  adGroupRn: string,
+  filter: NonNullable<CampaignConfig["inventoryFilter"]>,
+): Promise<void> {
+  const customerId = process.env.GOOGLE_ADS_CUSTOMER_ID!;
+  // Extract ad group ID from resource name (format: customers/{cid}/adGroups/{agid})
+  const adGroupId = adGroupRn.split("/").pop()!;
+  const criterionBase = `customers/${customerId}/adGroupCriteria/${adGroupId}~`;
+
+  // First, remove the default "all products" listing group created automatically
+  // Query existing listing groups for this ad group
+  const existingQuery = `
+    SELECT ad_group_criterion.criterion_id, ad_group_criterion.listing_group.type
+    FROM ad_group_criterion
+    WHERE ad_group.resource_name = '${adGroupRn}'
+      AND ad_group_criterion.type = 'LISTING_GROUP'
+  `;
+  const existing = await client.query(existingQuery) as Array<{ results?: Array<Record<string, Record<string, string | number>>> }>;
+  const removeOps: MutateOperation[] = [];
+  for (const batch of existing) {
+    for (const row of batch.results ?? []) {
+      const critId = row.adGroupCriterion?.criterionId;
+      if (critId) {
+        removeOps.push({ remove: `${criterionBase}${critId}` } as unknown as MutateOperation);
+      }
+    }
+  }
+  if (removeOps.length > 0) {
+    await client.mutateResource("adGroupCriteria", removeOps as unknown as Array<Record<string, unknown>>);
+  }
+
+  // Build the dimension case_value based on filter type
+  const dimensionKey = filterDimensionKey(filter.dimension);
+
+  // Temp IDs: -1 = root subdivision, -2..-N = value units, last = everything else
+  const ops: Array<Record<string, unknown>> = [];
+
+  // Root subdivision (no case_value, no parent)
+  ops.push({
+    create: {
+      ad_group: adGroupRn,
+      listing_group: { type: "SUBDIVISION" },
+      status: "ENABLED",
+      resource_name: `${criterionBase}-1`,
+    },
+  });
+
+  // One included UNIT per filter value
+  for (let i = 0; i < filter.values.length; i++) {
+    ops.push({
+      create: {
+        ad_group: adGroupRn,
+        listing_group: {
+          type: "UNIT",
+          parent_ad_group_criterion: `${criterionBase}-1`,
+          case_value: { [dimensionKey]: { value: filter.values[i] } },
+        },
+        status: "ENABLED",
+        cpc_bid_micros: "500000", // €0.50 default bid
+        resource_name: `${criterionBase}-${i + 2}`,
+      },
+    });
+  }
+
+  // "Everything else" excluded UNIT (case_value with empty dimension = other)
+  ops.push({
+    create: {
+      ad_group: adGroupRn,
+      listing_group: {
+        type: "UNIT",
+        parent_ad_group_criterion: `${criterionBase}-1`,
+        case_value: { [dimensionKey]: {} },
+      },
+      status: "ENABLED",
+      cpc_bid_micros: "10000", // €0.01 — minimal bid for "other" partition
+      resource_name: `${criterionBase}-${filter.values.length + 2}`,
+    },
+  });
+
+  await client.mutateResource("adGroupCriteria", ops as Array<Record<string, unknown>>);
+}
+
+/** Map our filter dimension names to Google Ads API ListingDimensionInfo field names */
+function filterDimensionKey(dimension: string): string {
+  const map: Record<string, string> = {
+    brand: "product_brand",
+    product_type: "product_type",
+    custom_label_0: "product_custom_attribute",
+    custom_label_1: "product_custom_attribute",
+    custom_label_2: "product_custom_attribute",
+    custom_label_3: "product_custom_attribute",
+    custom_label_4: "product_custom_attribute",
+  };
+  return map[dimension] ?? "product_brand";
 }
 
 async function buildPMaxCampaign(client: GoogleAdsClient, config: CampaignConfig): Promise<BuildResult> {
   const budgetRn = await createBudget(client, config.name, config.dailyBudgetMicros);
-  const campaignRn = await createBaseCampaign(client, config, budgetRn);
+  const businessName = config.businessName ?? "Shopping Event VIP";
+  const logoAsset = config.logoImageAsset ?? "customers/6267337247/assets/73011795371";
+  let adWarning: string | undefined;
 
+  // PMax with Brand Guidelines requires campaign + business name asset + logo
+  // all linked atomically. Use googleAds:mutate batch with temporary resource names.
+  const customerId = process.env.GOOGLE_ADS_CUSTOMER_ID!;
+  const tempCampaignRn = `customers/${customerId}/campaigns/-1`;
+  const tempBnAssetRn = `customers/${customerId}/assets/-2`;
+
+  const batchResult = await client.post("googleAds:mutate", {
+    mutateOperations: [
+      // Op 0: Create business name text asset (temp ID -2)
+      {
+        assetOperation: {
+          create: {
+            resourceName: tempBnAssetRn,
+            name: `${config.name} business name`,
+            type: "TEXT",
+            textAsset: { text: businessName },
+          },
+        },
+      },
+      // Op 1: Create campaign (temp ID -1)
+      {
+        campaignOperation: {
+          create: {
+            resourceName: tempCampaignRn,
+            name: config.name,
+            advertisingChannelType: channelType(config.type),
+            status: "PAUSED",
+            campaignBudget: budgetRn,
+            ...biddingStrategy(config),
+            geoTargetTypeSetting: {
+              positiveGeoTargetType: "PRESENCE_OR_INTEREST",
+              negativeGeoTargetType: "PRESENCE",
+            },
+            containsEuPoliticalAdvertising: "DOES_NOT_CONTAIN_EU_POLITICAL_ADVERTISING",
+          },
+        },
+      },
+      // Op 2: Link business name to campaign
+      {
+        campaignAssetOperation: {
+          create: {
+            campaign: tempCampaignRn,
+            asset: tempBnAssetRn,
+            fieldType: "BUSINESS_NAME",
+          },
+        },
+      },
+      // Op 3: Link logo to campaign
+      {
+        campaignAssetOperation: {
+          create: {
+            campaign: tempCampaignRn,
+            asset: logoAsset,
+            fieldType: "LOGO",
+          },
+        },
+      },
+    ],
+  }) as { mutateOperationResponses: Array<{ campaignResult?: { resourceName: string }; assetResult?: { resourceName: string } }> };
+
+  // Extract real campaign resource name from batch result
+  const campaignResponse = batchResult.mutateOperationResponses?.find(
+    (r: any) => r.campaignResult?.resourceName
+  );
+  const campaignRn = (campaignResponse as any)?.campaignResult?.resourceName;
+  if (!campaignRn) throw new Error("PMax campaign creation failed — no campaign resource name in batch response");
+
+  // Set end date
+  if (config.endDate) {
+    try {
+      const endDateTime = config.endDate.includes(" ") ? config.endDate : `${config.endDate} 23:59:59`;
+      await client.mutateResource("campaigns", [{
+        update: { resourceName: campaignRn, endDateTime },
+        updateMask: "end_date_time",
+      }]);
+    } catch { /* non-fatal */ }
+  }
+
+  // Set tracking URL template
+  if (config.trackingUrlTemplate) {
+    try {
+      await client.mutateResource("campaigns", [{
+        update: { resourceName: campaignRn, trackingUrlTemplate: config.trackingUrlTemplate },
+        updateMask: "tracking_url_template",
+      }]);
+      console.log("[campaign-builder] Set tracking template");
+    } catch { /* non-fatal */ }
+  }
+
+  // Set geo targeting (country-level)
+  try {
+    const countryCode = config.targetCountry ?? "BE";
+    const geoConstantMap: Record<string, string> = {
+      BE: "geoTargetConstants/2056", NL: "geoTargetConstants/2528",
+      FR: "geoTargetConstants/2250", DE: "geoTargetConstants/2276",
+    };
+    await client.mutateResource("campaignCriteria", [{
+      create: {
+        campaign: campaignRn,
+        location: { geo_target_constant: geoConstantMap[countryCode] ?? geoConstantMap.BE },
+      },
+    }]);
+    console.log(`[campaign-builder] Set country targeting: ${countryCode}`);
+  } catch { /* non-fatal */ }
+
+  // Create asset group
   let assetGroupRn: string | undefined;
 
   if (config.assetGroup) {
@@ -342,7 +577,7 @@ async function buildPMaxCampaign(client: GoogleAdsClient, config: CampaignConfig
     }
   }
 
-  return { campaignResourceName: campaignRn, assetGroupResourceName: assetGroupRn };
+  return { campaignResourceName: campaignRn, assetGroupResourceName: assetGroupRn, adWarning };
 }
 
 async function buildDisplayCampaign(client: GoogleAdsClient, config: CampaignConfig): Promise<BuildResult> {
@@ -645,4 +880,237 @@ async function buildDemandGenCampaign(client: GoogleAdsClient, config: CampaignC
     adResourceNames,
     adWarning,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Demand Gen — image-only helpers (Belvoir + future content campaigns)
+// ---------------------------------------------------------------------------
+
+export interface DemandGenImageAdGroupParams {
+  /** Resource name of the parent campaign (must be DEMAND_GEN type) */
+  campaignResourceName: string;
+  /** Ad group display name (e.g. the article slug) */
+  adGroupName: string;
+  /** Business name shown beneath the ad */
+  businessName: string;
+  /** Existing logo image asset resource name (required by Demand Gen) */
+  logoImageAsset: string;
+  /** 3–5 short headlines (≤30 chars each) */
+  headlines: string[];
+  /** 1–5 long headlines (≤90 chars each) */
+  longHeadlines: string[];
+  /** 1–5 descriptions (≤90 chars each) */
+  descriptions: string[];
+  /** Image URLs to upload as marketing assets (1.91:1 landscape preferred). At least 1 required. */
+  marketingImages: string[];
+  /** Optional 1:1 square images (Discover feed) */
+  squareMarketingImages?: string[];
+  /** Click-through URL — typically the article URL */
+  finalUrl: string;
+  /** Call-to-action label, defaults to "SHOP_NOW" */
+  callToAction?: string;
+}
+
+export interface DemandGenImageAdGroupResult {
+  adGroupResourceName: string;
+  adResourceName?: string;
+  warning?: string;
+}
+
+/**
+ * Add a `demand_gen_multi_asset_ad` to an existing ad group. Uploads images
+ * (fetched + base64-encoded) and creates the ad. Useful for repairing
+ * partially-built campaigns where the ad group exists but the ad failed.
+ */
+export async function addDemandGenImageAdToAdGroup(
+  client: GoogleAdsClient,
+  adGroupResourceName: string,
+  params: Omit<DemandGenImageAdGroupParams, "campaignResourceName" | "adGroupName"> & { adGroupName: string },
+): Promise<DemandGenImageAdGroupResult> {
+  return uploadAndCreateImageAd(client, adGroupResourceName, params.adGroupName, params);
+}
+
+/**
+ * Create one image-only Demand Gen ad group inside an existing Demand Gen
+ * campaign. Uploads images as Google Ads assets, then creates a
+ * `demand_gen_multi_asset_ad` that rotates them across Discover/Gmail/in-feed.
+ *
+ * Use this when you want one ad group per piece of content (e.g. one Belvoir
+ * article = one ad group, sharing a single category-level campaign budget).
+ */
+export async function createDemandGenImageAdGroup(
+  client: GoogleAdsClient,
+  params: DemandGenImageAdGroupParams,
+): Promise<DemandGenImageAdGroupResult> {
+  // 1. Create the ad group
+  const adGroupResult = await client.mutateResource("adGroups", [{
+    create: {
+      name: params.adGroupName,
+      campaign: params.campaignResourceName,
+      status: "ENABLED",
+    },
+  }]);
+  const adGroupRn = adGroupResult.results[0].resourceName as string;
+  return uploadAndCreateImageAd(client, adGroupRn, params.adGroupName, params);
+}
+
+async function uploadAndCreateImageAd(
+  client: GoogleAdsClient,
+  adGroupRn: string,
+  adGroupLabel: string,
+  params: Omit<DemandGenImageAdGroupParams, "campaignResourceName" | "adGroupName">,
+): Promise<DemandGenImageAdGroupResult> {
+
+  // 2. Upload marketing images as IMAGE assets. Google Ads requires raw bytes
+  // (base64) — the URL field is read-only — and only accepts JPG/PNG/GIF
+  // (NOT webp). For belvoir.be CDN we coerce ?format=jpg.
+  // Coerce a Belvoir CDN image URL to a Google-Ads-compatible JPG at the
+  // requested target ratio. Belvoir's CDN supports server-side crop via
+  // ?width=&height=&fit=cover, which lets us guarantee 1.91:1 (landscape)
+  // or 1:1 (square) regardless of the source image's aspect ratio.
+  const coerceCdn = (rawUrl: string, target: "landscape" | "square"): string => {
+    // Decode any leftover HTML entities (og:image meta values often contain &amp;).
+    const decoded = rawUrl
+      .replace(/&amp;/g, "&")
+      .replace(/&lt;/g, "<")
+      .replace(/&gt;/g, ">")
+      .replace(/&quot;/g, '"');
+    try {
+      const u = new URL(decoded);
+      if (u.hostname.endsWith("belvoir.be")) {
+        // Wipe any existing size params so we control the output dimensions.
+        for (const k of ["height", "width", "h", "w"]) u.searchParams.delete(k);
+        if (target === "landscape") {
+          u.searchParams.set("width", "1200");
+          u.searchParams.set("height", "628");
+        } else {
+          u.searchParams.set("width", "1080");
+          u.searchParams.set("height", "1080");
+        }
+        u.searchParams.set("fit", "cover");
+        u.searchParams.set("format", "jpg");
+        return u.toString();
+      }
+    } catch { /* fall through */ }
+    return decoded;
+  };
+
+  const uploadImage = async (rawUrl: string, label: string, target: "landscape" | "square"): Promise<string | null> => {
+    const url = coerceCdn(rawUrl, target);
+    let base64Data: string;
+    try {
+      const fetchRes = await fetch(url, {
+        headers: {
+          "User-Agent": "Mozilla/5.0 (sev-ai-google-ads-agent)",
+          "Accept": "image/jpeg,image/png,image/gif,image/*;q=0.8,*/*;q=0.5",
+        },
+        redirect: "follow",
+      });
+      if (!fetchRes.ok) {
+        console.warn(`[campaign-builder] image fetch ${fetchRes.status} for ${url}`);
+        return null;
+      }
+      const ct = fetchRes.headers.get("content-type") ?? "";
+      if (!/^image\/(jpeg|png|gif)/i.test(ct)) {
+        console.warn(`[campaign-builder] unsupported image type ${ct} for ${url} (need jpg/png/gif)`);
+        return null;
+      }
+      const buf = Buffer.from(await fetchRes.arrayBuffer());
+      // Google Ads minimum is 600x314 — anything tiny will be rejected. Use byte size as a rough proxy.
+      if (buf.byteLength < 6_000) {
+        console.warn(`[campaign-builder] image too small (${buf.byteLength}b) for ${url}`);
+        return null;
+      }
+      base64Data = buf.toString("base64");
+    } catch (err) {
+      console.warn(`[campaign-builder] image fetch failed for ${url}: ${err instanceof Error ? err.message : String(err)}`);
+      return null;
+    }
+
+    try {
+      const r = await client.mutateResource("assets", [{
+        create: {
+          name: `${adGroupLabel} ${label}`,
+          type: "IMAGE",
+          image_asset: { data: base64Data },
+        },
+      }]);
+      return r.results[0].resourceName as string;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn(`[campaign-builder] image asset upload failed for ${url}: ${msg.slice(0, 200)}`);
+      return null;
+    }
+  };
+
+  // Upload each input image twice — once cropped to 1.91:1 landscape,
+  // once cropped to 1:1 square. Belvoir CDN does the cropping server-side
+  // (?fit=cover) so the resulting assets always match Google's aspect
+  // requirements regardless of source dimensions.
+  const landscapeAssets: string[] = [];
+  for (let i = 0; i < params.marketingImages.length && landscapeAssets.length < 5; i++) {
+    const rn = await uploadImage(params.marketingImages[i], `landscape ${i + 1}`, "landscape");
+    if (rn) landscapeAssets.push(rn);
+  }
+
+  const squareInputs = params.squareMarketingImages?.length
+    ? params.squareMarketingImages
+    : params.marketingImages;
+  const squareAssets: string[] = [];
+  for (let i = 0; i < squareInputs.length && squareAssets.length < 5; i++) {
+    const rn = await uploadImage(squareInputs[i], `square ${i + 1}`, "square");
+    if (rn) squareAssets.push(rn);
+  }
+
+  if (landscapeAssets.length === 0 && squareAssets.length === 0) {
+    return {
+      adGroupResourceName: adGroupRn,
+      warning: "All image uploads failed — ad not created. Check image URLs are publicly fetchable + min 600x314 landscape or 300x300 square.",
+    };
+  }
+
+  // 3. Create the demand_gen_multi_asset_ad (Discover-style image ad).
+  // Only include landscape OR square fields if we have valid assets — Google
+  // rejects the entire ad if any single image in a field fails aspect ratio.
+  const adPayload: Record<string, unknown> = {
+    logo_images: [{ asset: params.logoImageAsset }],
+    headlines: params.headlines.map((text) => ({ text })),
+    descriptions: params.descriptions.map((text) => ({ text })),
+    business_name: params.businessName,
+  };
+  if (landscapeAssets.length > 0) {
+    adPayload.marketing_images = landscapeAssets.map((asset) => ({ asset }));
+  }
+  if (squareAssets.length > 0) {
+    adPayload.square_marketing_images = squareAssets.map((asset) => ({ asset }));
+  }
+
+  try {
+    // call_to_action_text intentionally omitted — Google rejects enum-style
+    // values like "LearnMore" / "LEARN_MORE" for this account. Default CTA
+    // is auto-selected by Google.
+    await client.mutateResource("adGroupAds", [{
+      create: {
+        ad_group: adGroupRn,
+        status: "ENABLED",
+        ad: {
+          demand_gen_multi_asset_ad: adPayload as never,
+          final_urls: [params.finalUrl],
+          name: `${adGroupLabel} - DG Image`,
+        },
+      },
+    }]);
+    return { adGroupResourceName: adGroupRn, adResourceName: `${adGroupRn}/ad` };
+  } catch (err) {
+    const errMsg = err instanceof Error ? err.message : String(err);
+    const policy = errMsg.match(/"topic":\s*"([^"]+)"/)?.[1];
+    const detail = policy === "DESTINATION_NOT_WORKING"
+      ? "landing page not reachable (try appending ?ref=gads)"
+      : errMsg.slice(0, 800);
+    console.error(`[campaign-builder] FULL multi_asset_ad error: ${errMsg}`);
+    return {
+      adGroupResourceName: adGroupRn,
+      warning: `multi_asset_ad creation failed — ${detail}`,
+    };
+  }
 }
